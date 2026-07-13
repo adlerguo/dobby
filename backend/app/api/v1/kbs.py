@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_current_auth, require_perm
 from app.core.database import get_db
-from app.models import Chunk, Document
+from app.models import Document, KnowledgeBase
+from app.rag.chunk_store import chunk_model_for_dim
 from app.rag.retrieve import retrieve_chunks
 from app.rag.tasks import enqueue_parse_document, enqueue_reindex_document
 from app.repositories import DocumentRepository, KnowledgeBaseRepository
@@ -20,6 +21,8 @@ router = APIRouter(tags=["knowledge_bases"])
 def kb_error(exc: ValueError) -> HTTPException:
     detail = str(exc)
     if detail == "no_active_model_channel":
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+    if detail == "kb_embedding_model_locked_has_documents":
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     if detail.endswith("_exists"):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
@@ -219,24 +222,29 @@ async def list_document_chunks(
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentChunkOut]:
     document_result = await db.execute(
-        select(Document.id).where(Document.id == document_id, Document.tenant_id == auth.tenant_id)
+        select(Document, KnowledgeBase)
+        .join(KnowledgeBase, KnowledgeBase.id == Document.kb_id)
+        .where(Document.id == document_id, Document.tenant_id == auth.tenant_id)
     )
-    if document_result.scalar_one_or_none() is None:
+    row = document_result.first()
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document_not_found")
+    _, kb = row
+    chunk_model = chunk_model_for_dim(kb.embedding_dim)
 
     result = await db.execute(
         select(
-            Chunk.id,
-            Chunk.seq,
-            Chunk.content,
-            func.length(Chunk.content).label("content_length"),
-            Chunk.tokens,
-            Chunk.meta,
-            Chunk.embedding.is_not(None).label("has_embedding"),
-            Chunk.created_at,
+            chunk_model.id,
+            chunk_model.seq,
+            chunk_model.content,
+            func.length(chunk_model.content).label("content_length"),
+            chunk_model.tokens,
+            chunk_model.meta,
+            chunk_model.embedding.is_not(None).label("has_embedding"),
+            chunk_model.created_at,
         )
-        .where(Chunk.doc_id == document_id, Chunk.tenant_id == auth.tenant_id)
-        .order_by(Chunk.seq.asc().nulls_last(), Chunk.created_at.asc())
+        .where(chunk_model.doc_id == document_id, chunk_model.tenant_id == auth.tenant_id)
+        .order_by(chunk_model.seq.asc().nulls_last(), chunk_model.created_at.asc())
     )
     return [DocumentChunkOut(**dict(row)) for row in result.mappings().all()]
 

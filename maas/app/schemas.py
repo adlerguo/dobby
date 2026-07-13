@@ -38,6 +38,7 @@ class ChannelOut(BaseModel):
     status: str | None
     health: str | None
     error: str | None = None
+    embedding_dim: int | None = None
 
 
 class ChannelProbeIn(BaseModel):
@@ -54,6 +55,7 @@ class ChannelProbeOut(BaseModel):
     ok: bool
     health: str = Field(pattern=r"^(ok|failed)$")
     error: str | None = None
+    embedding_dim: int | None = None
 
 
 class ModelOut(BaseModel):

@@ -48,6 +48,7 @@ class KnowledgeBaseOut(BaseModel):
     description: str | None
     config: dict[str, Any]
     embedding_model: str | None
+    embedding_dim: int
     status: str | None
     created_by: UUID | None
     created_at: datetime

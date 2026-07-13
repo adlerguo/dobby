@@ -66,6 +66,7 @@ async def admin_probe_channel(channel_id: UUID, db: AsyncSession = Depends(get_d
         await mark_channel_health(db, channel_id, result.health)
         channel = await get_channel(db, channel_id)
         channel.error = result.error
+        channel.embedding_dim = result.embedding_dim
         return channel
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel_not_found") from None

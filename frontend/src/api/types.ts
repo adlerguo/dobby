@@ -139,6 +139,7 @@ export interface ModelCenterTestResult {
   ok: boolean
   health: string
   error?: string | null
+  embedding_dim?: number | null
 }
 
 export interface ModelCenterConnectResponse {
@@ -159,6 +160,7 @@ export interface KnowledgeBase {
   status?: string
   description?: string | null
   embedding_model?: string
+  embedding_dim?: number
   created_at?: string
   updated_at?: string
 }

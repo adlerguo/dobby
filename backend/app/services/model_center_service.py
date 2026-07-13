@@ -89,6 +89,7 @@ async def test_existing_channel(
         ok=maas_channel.health == "ok",
         health=maas_channel.health or "failed",
         error=maas_channel.error,
+        embedding_dim=maas_channel.embedding_dim,
     )
     return ModelCenterChannelTestOut(
         channel=ModelChannelOut.model_validate(channel),
@@ -125,7 +126,7 @@ async def probe_transient_catalog_channel(
             result = MaasProbeOut.model_validate(response.json())
     except httpx.HTTPError as exc:
         raise ValueError("maas_probe_failed") from exc
-    return ConnectionTestOut(ok=result.ok, health=result.health, error=result.error)
+    return ConnectionTestOut(ok=result.ok, health=result.health, error=result.error, embedding_dim=result.embedding_dim)
 
 
 async def create_maas_catalog_channel(

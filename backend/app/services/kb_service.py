@@ -2,14 +2,17 @@ from io import BytesIO
 from functools import partial
 from uuid import UUID, uuid4
 
+import httpx
 from anyio import to_thread
 from fastapi import UploadFile
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.storage import delete_object, upload_object
-from app.models import Chunk, Document, KnowledgeBase
+from app.models import Document, KnowledgeBase, Model, ModelChannel
+from app.rag.chunk_store import delete_document_chunks
 from app.repositories import DocumentRepository, KnowledgeBaseRepository
 from app.schemas import KnowledgeBaseCreate, KnowledgeBaseUpdate
 from app.services.validation import (
@@ -34,6 +37,11 @@ async def create_kb(
         name=payload.name,
         detail="kb_name_exists",
     )
+    embedding_dim = await resolve_embedding_dim(
+        db,
+        tenant_id=tenant_id,
+        embedding_model=payload.embedding_model,
+    )
     kb = KnowledgeBase(
         tenant_id=tenant_id,
         name=payload.name,
@@ -41,6 +49,7 @@ async def create_kb(
         description=payload.description,
         config=payload.config,
         embedding_model=payload.embedding_model,
+        embedding_dim=embedding_dim,
         status="active",
         created_by=created_by,
     )
@@ -71,7 +80,20 @@ async def update_kb(
             detail="kb_name_exists",
             exclude_id=kb_id,
         )
-    kb = await repo.update_by_id(kb_id, payload.model_dump(exclude_unset=True))
+    values = payload.model_dump(exclude_unset=True)
+    if payload.embedding_model is not None:
+        current_kb = await repo.get_by_id(kb_id)
+        if current_kb is None:
+            return None
+        current_model = current_kb.embedding_model or "mock-embedding"
+        if payload.embedding_model != current_model and await kb_has_documents(db, tenant_id=tenant_id, kb_id=kb_id):
+            raise ValueError("kb_embedding_model_locked_has_documents")
+        values["embedding_dim"] = await resolve_embedding_dim(
+            db,
+            tenant_id=tenant_id,
+            embedding_model=payload.embedding_model,
+        )
+    kb = await repo.update_by_id(kb_id, values)
     if kb is None:
         return None
     try:
@@ -148,8 +170,56 @@ async def delete_document(db: AsyncSession, *, tenant_id: UUID, document_id: UUI
     if document is None:
         return False
 
-    await db.execute(delete(Chunk).where(Chunk.doc_id == document.id, Chunk.tenant_id == tenant_id))
+    await delete_document_chunks(db, tenant_id=tenant_id, document_id=document.id)
     await db.delete(document)
     await db.commit()
     await to_thread.run_sync(delete_object, document.source_uri)
     return True
+
+
+async def kb_has_documents(db: AsyncSession, *, tenant_id: UUID, kb_id: UUID) -> bool:
+    result = await db.execute(
+        select(Document.id)
+        .where(
+            Document.tenant_id == tenant_id,
+            Document.kb_id == kb_id,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def resolve_embedding_dim(db: AsyncSession, *, tenant_id: UUID, embedding_model: str) -> int:
+    result = await db.execute(
+        select(ModelChannel.id)
+        .join(Model, Model.id == ModelChannel.model_id)
+        .where(
+            Model.name == embedding_model,
+            Model.type == "embedding",
+            ModelChannel.status == "active",
+            ModelChannel.health != "failed",
+            (ModelChannel.tenant_id == tenant_id) | (ModelChannel.tenant_id.is_(None)),
+        )
+        .order_by(ModelChannel.weight.desc(), ModelChannel.created_at.asc())
+        .limit(1)
+    )
+    channel_id = result.scalar_one_or_none()
+    if channel_id is None:
+        raise ValueError("no_active_model_channel")
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(f"{settings.maas_base_url.rstrip('/')}/admin/channels/{channel_id}/health")
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.HTTPError as exc:
+        raise ValueError("maas_probe_failed") from exc
+
+    if payload.get("health") != "ok":
+        raise ValueError(payload.get("error") or "embedding_probe_failed")
+    embedding_dim = payload.get("embedding_dim")
+    if embedding_dim is None:
+        raise ValueError("embedding_dim_unknown")
+    if int(embedding_dim) not in {1024, 1536, 3072}:
+        raise ValueError(f"unsupported_embedding_dim:{embedding_dim}")
+    return int(embedding_dim)

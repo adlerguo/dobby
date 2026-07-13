@@ -89,6 +89,7 @@ class KnowledgeBase(IdMixin, TimestampMixin, TenantMixin, Base):
     description: Mapped[str | None] = mapped_column(Text)
     config: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     embedding_model: Mapped[str | None] = mapped_column(Text, server_default=text("'text-embedding-3-small'"))
+    embedding_dim: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1536"))
     status: Mapped[str | None] = mapped_column(Text, server_default=text("'active'"))
     created_by: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
     __table_args__ = (
@@ -136,6 +137,52 @@ class Chunk(IdMixin, CreatedAtMixin, TenantMixin, Base):
     tokens: Mapped[int | None] = mapped_column(Integer)
     meta: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+
+
+class Chunk1024(IdMixin, CreatedAtMixin, TenantMixin, Base):
+    __tablename__ = "chunks_1024"
+    __table_args__ = (
+        Index("ix_chunks_1024_kb_id", "kb_id"),
+        Index(
+            "ix_chunks_1024_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "chunks_1024_content_fts",
+            func.to_tsvector("simple", text("content")),
+            postgresql_using="gin",
+        ),
+    )
+
+    kb_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    doc_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    seq: Mapped[int | None] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tokens: Mapped[int | None] = mapped_column(Integer)
+    meta: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
+
+
+class Chunk3072(IdMixin, CreatedAtMixin, TenantMixin, Base):
+    __tablename__ = "chunks_3072"
+    __table_args__ = (
+        Index("ix_chunks_3072_kb_id", "kb_id"),
+        Index(
+            "chunks_3072_content_fts",
+            func.to_tsvector("simple", text("content")),
+            postgresql_using="gin",
+        ),
+    )
+
+    kb_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    doc_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    seq: Mapped[int | None] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tokens: Mapped[int | None] = mapped_column(Integer)
+    meta: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(3072))
 
 
 class AgentTemplate(IdMixin, Base):
@@ -454,6 +501,8 @@ ALL_MODELS = (
     KnowledgeBase,
     Document,
     Chunk,
+    Chunk1024,
+    Chunk3072,
     AgentTemplate,
     Agent,
     Tool,

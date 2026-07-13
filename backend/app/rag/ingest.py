@@ -2,14 +2,15 @@ from functools import partial
 from uuid import UUID
 
 from anyio import to_thread
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.storage import download_object
-from app.models import Chunk, Document, KnowledgeBase
 from app.rag.chunking import chunk_text
+from app.rag.chunk_store import chunk_model_for_dim, delete_kb_document_chunks, load_document_text_from_chunks
 from app.rag.embeddings import embed_texts
 from app.rag.parsers import parse_document_bytes
+from app.models import Document, KnowledgeBase
 
 
 async def ingest_document(db: AsyncSession, document_id: UUID, *, force: bool = False) -> None:
@@ -42,13 +43,20 @@ async def ingest_document(db: AsyncSession, document_id: UUID, *, force: bool = 
         )
         if len(embeddings) != len(chunks):
             raise ValueError("embedding_count_mismatch")
-        if any(len(embedding) != 1536 for embedding in embeddings):
+        embedding_dim = int(kb.embedding_dim or 1536)
+        if any(len(embedding) != embedding_dim for embedding in embeddings):
             raise ValueError("dimension_mismatch")
 
-        await db.execute(delete(Chunk).where(Chunk.doc_id == document.id, Chunk.tenant_id == document.tenant_id))
+        chunk_model = chunk_model_for_dim(embedding_dim)
+        await delete_kb_document_chunks(
+            db,
+            tenant_id=document.tenant_id,
+            document_id=document.id,
+            embedding_dim=embedding_dim,
+        )
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             db.add(
-                Chunk(
+                chunk_model(
                     tenant_id=document.tenant_id,
                     kb_id=document.kb_id,
                     doc_id=document.id,
@@ -61,7 +69,7 @@ async def ingest_document(db: AsyncSession, document_id: UUID, *, force: bool = 
             )
 
         meta = dict(document.meta or {})
-        meta["ingest_task"] = {"status": "done", "chunk_count": len(chunks)}
+        meta["ingest_task"] = {"status": "done", "chunk_count": len(chunks), "embedding_dim": embedding_dim}
         document.meta = meta
         document.parse_status = "done"
         await db.commit()
@@ -89,12 +97,7 @@ async def load_document_text(db: AsyncSession, document: Document, *, force: boo
         if not force:
             raise
 
-    result = await db.execute(
-        select(Chunk.content)
-        .where(Chunk.doc_id == document.id, Chunk.tenant_id == document.tenant_id)
-        .order_by(Chunk.seq.asc().nulls_last(), Chunk.created_at.asc())
-    )
-    text = "\n\n".join(row[0] for row in result.all() if row[0])
+    text = await load_document_text_from_chunks(db, tenant_id=document.tenant_id, document_id=document.id)
     if not text.strip():
         raise ValueError("source_document_unavailable")
     return text

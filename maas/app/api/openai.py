@@ -110,7 +110,11 @@ async def embeddings(
                 await record_usage(db, channel, cached, latency_ms=0, cache_hit=True)
                 return cached
             if channel["base_url"].startswith("mock://"):
-                response = mock_embedding_response(payload.model, inputs)
+                response = mock_embedding_response(
+                    payload.model,
+                    inputs,
+                    dimensions=int(effective_payload.get("dimensions") or 1536),
+                )
             else:
                 response = await proxy_openai("/v1/embeddings", channel, effective_payload)
             latency_ms = int((time.perf_counter() - started) * 1000)

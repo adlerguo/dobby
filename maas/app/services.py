@@ -196,12 +196,12 @@ def mock_chat_response(model: str, messages: list[dict[str, Any]]) -> dict[str, 
     }
 
 
-def mock_embedding_response(model: str, inputs: list[str]) -> dict[str, Any]:
+def mock_embedding_response(model: str, inputs: list[str], *, dimensions: int = 1536) -> dict[str, Any]:
     data = []
     for index, text in enumerate(inputs):
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         seed = [byte / 255 for byte in digest]
-        embedding = (seed * ((1536 // len(seed)) + 1))[:1536]
+        embedding = (seed * ((dimensions // len(seed)) + 1))[:dimensions]
         data.append({"object": "embedding", "index": index, "embedding": embedding})
     return {"object": "list", "model": model, "data": data, "usage": {"prompt_tokens": sum(len(i.split()) for i in inputs), "total_tokens": sum(len(i.split()) for i in inputs)}}
 
@@ -288,7 +288,8 @@ async def probe_transient_channel(payload: ChannelProbeIn) -> ChannelProbeOut:
     if payload.model_type == "rerank":
         return ChannelProbeOut(ok=False, health="failed", error="model_type_not_supported")
     if payload.base_url.startswith("mock://") or payload.protocol == "mock":
-        return ChannelProbeOut(ok=True, health="ok")
+        embedding_dim = int(payload.request_defaults.get("dimensions") or 1536) if payload.model_type == "embedding" else None
+        return ChannelProbeOut(ok=True, health="ok", embedding_dim=embedding_dim)
 
     channel = {
         "base_url": payload.base_url,
@@ -306,7 +307,12 @@ async def probe_transient_channel(payload: ChannelProbeIn) -> ChannelProbeOut:
 async def probe_persisted_channel(db: AsyncSession, channel_id: UUID) -> ChannelProbeOut:
     channel = await get_channel_row(db, channel_id)
     if channel["base_url"].startswith("mock://"):
-        return ChannelProbeOut(ok=True, health="ok")
+        embedding_dim = None
+        provider_config = channel.get("provider_config") or {}
+        request_defaults = provider_config.get("request_defaults") if isinstance(provider_config, dict) else None
+        if channel.get("model_type") == "embedding":
+            embedding_dim = int((request_defaults or {}).get("dimensions") or 1536) if isinstance(request_defaults, dict) else 1536
+        return ChannelProbeOut(ok=True, health="ok", embedding_dim=embedding_dim)
     if channel.get("model_type") == "rerank":
         return ChannelProbeOut(ok=False, health="failed", error="model_type_not_supported")
     api_key = decrypt_secret(channel["api_key_enc"])
@@ -339,6 +345,10 @@ async def probe_channel_request(
                 api_key=api_key,
             )
         elif model_type == "embedding":
+            expected_dim = None
+            request_defaults = (channel.get("provider_config") or {}).get("request_defaults")
+            if isinstance(request_defaults, dict) and request_defaults.get("dimensions"):
+                expected_dim = int(request_defaults["dimensions"])
             response = await proxy_openai_with_key(
                 "/v1/embeddings",
                 channel,
@@ -346,8 +356,10 @@ async def probe_channel_request(
                 api_key=api_key,
             )
             embedding = ((response.get("data") or [{}])[0].get("embedding") or [])
-            if len(embedding) != 1536:
-                return ChannelProbeOut(ok=False, health="failed", error="dimension_mismatch")
+            actual_dim = len(embedding)
+            if expected_dim is not None and actual_dim != expected_dim:
+                return ChannelProbeOut(ok=False, health="failed", error="dimension_mismatch", embedding_dim=actual_dim)
+            return ChannelProbeOut(ok=True, health="ok", embedding_dim=actual_dim)
         else:
             return ChannelProbeOut(ok=False, health="failed", error="model_type_not_supported")
         return ChannelProbeOut(ok=True, health="ok")

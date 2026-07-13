@@ -21,6 +21,7 @@ class ConnectionTestOut(BaseModel):
     ok: bool
     health: str
     error: str | None = None
+    embedding_dim: int | None = None
 
 
 class ModelCenterConnectOut(BaseModel):
@@ -47,12 +48,14 @@ class MaasChannelOut(BaseModel):
     status: str | None = None
     health: str | None = None
     error: str | None = None
+    embedding_dim: int | None = None
 
 
 class MaasProbeOut(BaseModel):
     ok: bool
     health: str
     error: str | None = None
+    embedding_dim: int | None = None
 
 
 class CatalogConnectionMeta(BaseModel):

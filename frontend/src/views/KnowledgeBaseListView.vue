@@ -116,9 +116,9 @@ async function saveKbSettings() {
   const nextModel = settingsForm.value.embedding_model || 'mock-embedding'
   if (oldModel !== nextModel) {
     await ElMessageBox.confirm(
-      '更换 embedding 模型后，已有向量仍由旧模型生成。请继续执行“重建索引”，否则检索结果会不准确。',
+      '仅空知识库允许更换 embedding 模型。已有文档的知识库会在后端拒绝切换，避免旧维度切片被孤立导致文档存在但检索不到。',
       '确认更换 embedding 模型',
-      { confirmButtonText: '确认更换', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: '继续保存', cancelButtonText: '取消', type: 'warning' },
     )
   }
 
@@ -133,7 +133,7 @@ async function saveKbSettings() {
     if (activeKb.value?.id === updated.id) activeKb.value = updated
     editingKb.value = updated
     kbSettingsVisible.value = false
-    ElMessage.success('知识库设置已保存，请按需重建索引')
+    ElMessage.success('知识库设置已保存')
   } catch (error) {
     ElMessage.error(formatKbError(error))
   } finally {
@@ -364,6 +364,7 @@ function formatKbError(error: unknown) {
     document_name_exists: '该知识库中已存在同名文档',
     unsupported_document_type: '暂不支持该文件类型，请上传 txt、md、pdf 或 docx',
     kb_not_found: '知识库不存在或已归档',
+    kb_embedding_model_locked_has_documents: '该知识库已有文档，embedding 模型和维度已锁定。请新建知识库并重新上传文档。',
   }
   return map[message] || message
 }
@@ -431,6 +432,11 @@ watch(documentDrawerVisible, (visible) => {
           <el-table-column prop="embedding_model" label="Embedding" width="180">
             <template #default="{ row }">
               <span class="mono-id">{{ row.embedding_model || 'mock-embedding' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="维度" width="90">
+            <template #default="{ row }">
+              <span class="mono-id">{{ row.embedding_dim || 1536 }}</span>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="120">
@@ -695,11 +701,11 @@ watch(documentDrawerVisible, (visible) => {
             />
           </el-select>
           <div class="field-help">
-            更换模型后，已有向量不会自动变更。请保存后点击“重建索引”，让已完成文档用新模型重新向量化。
+            仅空知识库允许更换 embedding 模型。已有文档后模型和维度会锁定；如需更换，请新建知识库并重新上传文档。
           </div>
         </el-form-item>
         <el-alert
-          title="当前向量列为 1536 维。请选择 1536 维 embedding 模型，例如 text-embedding-3-small；维度不匹配会导致重建失败并标记文档 failed。"
+          title="系统会按所选 embedding 模型的真实维度写入知识库，当前支持 1024 / 1536 / 3072 维。3072 维暂不建 HNSW 索引，适合小型知识库；大库建议选择 1024/1536 维或将 large 模型 dimensions 降到 2000 以内。DeepSeek 不提供 embedding。"
           type="warning"
           :closable="false"
         />
