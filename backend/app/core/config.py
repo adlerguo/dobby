@@ -1,0 +1,26 @@
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    app_name: str = "Enterprise AI Platform Backend"
+    app_version: str = "0.1.0"
+    service_name: str = "backend"
+
+    database_url: str = Field(default="postgresql+psycopg://app:pass@postgres:5432/eap")
+    redis_url: str = Field(default="redis://redis:6379/0")
+    minio_endpoint: str = Field(default="minio:9000")
+    minio_key: str = Field(default="minioadmin")
+    minio_secret: str = Field(default="minioadmin")
+    minio_bucket: str = Field(default="eap-documents")
+    minio_secure: bool = Field(default=False)
+    maas_base_url: str = Field(default="http://maas:8100")
+    sandbox_base_url: str = Field(default="http://sandbox:8200")
+    jwt_secret: str = Field(default="change-me")
+    jwt_access_ttl: int = Field(default=3600)
+    jwt_refresh_ttl: int = Field(default=604800)
+
+
+settings = Settings()

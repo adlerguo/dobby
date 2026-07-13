@@ -1,0 +1,1404 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>企业 AI 智能体中台</title>
+    <style>
+      :root {
+        color: #1f2937;
+        background: #f4f6f8;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-width: 320px;
+        margin: 0;
+      }
+
+      body.auth-locked {
+        overflow: hidden;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      .shell {
+        display: grid;
+        min-height: 100vh;
+        grid-template-columns: 268px minmax(0, 1fr);
+      }
+
+      .sidebar {
+        border-right: 1px solid #d8dee8;
+        background: #ffffff;
+        padding: 22px 16px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+
+      .mark {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border-radius: 8px;
+        background: #143d59;
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .brand strong,
+      .brand span {
+        display: block;
+      }
+
+      .brand span,
+      .muted,
+      .meta {
+        color: #667085;
+      }
+
+      .brand span {
+        margin-top: 3px;
+        font-size: 13px;
+      }
+
+      .nav {
+        display: grid;
+        gap: 6px;
+      }
+
+      .nav button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 42px;
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: #475467;
+        padding: 0 12px;
+        text-align: left;
+      }
+
+      .nav button.active {
+        background: #e7f1f8;
+        color: #143d59;
+        font-weight: 700;
+      }
+
+      .nav .icon {
+        display: grid;
+        width: 22px;
+        place-items: center;
+        color: #6b7280;
+      }
+
+      .sidebar-footer {
+        margin-top: 28px;
+        border-top: 1px solid #eef1f5;
+        padding-top: 16px;
+      }
+
+      .content {
+        min-width: 0;
+        padding: 24px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      h2 {
+        font-size: 18px;
+      }
+
+      h3 {
+        font-size: 15px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .btn {
+        min-height: 36px;
+        border: 1px solid #cfd8e3;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #344054;
+        padding: 0 12px;
+      }
+
+      .btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.68;
+      }
+
+      .btn.primary {
+        border-color: #143d59;
+        background: #143d59;
+        color: #ffffff;
+      }
+
+      .btn.active {
+        border-color: #143d59;
+        background: #e7f1f8;
+        color: #143d59;
+        font-weight: 700;
+      }
+
+      .btn.danger {
+        border-color: #f0b4b4;
+        background: #fff7f7;
+        color: #a43b3b;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        border: 1px solid #cfd8e3;
+        border-radius: 999px;
+        background: #ffffff;
+        padding: 0 10px;
+        color: #475467;
+        font-size: 13px;
+      }
+
+      .tag.ok {
+        border-color: #a8d8b9;
+        background: #f0fbf3;
+        color: #17663a;
+      }
+
+      .tag.warn {
+        border-color: #eed18f;
+        background: #fff8e6;
+        color: #8a5b00;
+      }
+
+      .panel {
+        display: none;
+      }
+
+      .panel.active {
+        display: block;
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .grid.two {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+
+      .grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .grid.four {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .auth-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: grid;
+        place-items: center;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 246, 248, 0.98)),
+          #f4f6f8;
+        padding: 24px;
+      }
+
+      .auth-screen.hidden {
+        display: none;
+      }
+
+      .auth-card {
+        width: min(100%, 420px);
+        border: 1px solid #d8dee8;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 28px;
+        box-shadow: 0 18px 50px rgba(20, 61, 89, 0.12);
+      }
+
+      .auth-brand {
+        display: grid;
+        justify-items: center;
+        gap: 12px;
+        margin-bottom: 24px;
+        text-align: center;
+      }
+
+      .auth-brand .mark {
+        width: 48px;
+        height: 48px;
+      }
+
+      .auth-brand h1 {
+        font-size: 24px;
+      }
+
+      .auth-form {
+        display: grid;
+        gap: 14px;
+      }
+
+      .auth-submit {
+        width: 100%;
+        margin-top: 4px;
+      }
+
+      .auth-helper {
+        border: 0;
+        background: transparent;
+        color: #475467;
+        padding: 4px;
+      }
+
+      .auth-error {
+        border: 1px solid #f0b4b4;
+        border-radius: 8px;
+        background: #fff7f7;
+        color: #9b2c2c;
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+
+      .card {
+        border: 1px solid #d8dee8;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 16px;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .metric {
+        min-height: 104px;
+      }
+
+      .metric span {
+        color: #667085;
+        font-size: 13px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 12px;
+        color: #111827;
+        font-size: 26px;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .form-grid.two {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: #344054;
+        font-size: 13px;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid #cfd8e3;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #1f2937;
+        padding: 9px 10px;
+      }
+
+      textarea {
+        min-height: 96px;
+        resize: vertical;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #edf1f5;
+        padding: 10px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: #667085;
+        font-weight: 700;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      .stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .kb-search {
+        min-width: min(100%, 320px);
+      }
+
+      .result-card {
+        border: 1px solid #edf1f5;
+        border-radius: 8px;
+        background: #fbfcfd;
+        padding: 12px;
+      }
+
+      .result-card p {
+        margin-top: 8px;
+        line-height: 1.7;
+      }
+
+      .result-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        color: #667085;
+        font-size: 12px;
+      }
+
+      .chat-box {
+        display: grid;
+        grid-template-rows: minmax(260px, 1fr) auto;
+        min-height: 560px;
+      }
+
+      .messages {
+        overflow: auto;
+        border: 1px solid #edf1f5;
+        border-radius: 8px;
+        background: #fbfcfd;
+        padding: 12px;
+      }
+
+      .message {
+        max-width: 86%;
+        margin-bottom: 10px;
+        border: 1px solid #d8dee8;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 10px 12px;
+        white-space: pre-wrap;
+      }
+
+      .message.user {
+        margin-left: auto;
+        border-color: #bcd0de;
+        background: #eef6fb;
+      }
+
+      .message .role {
+        display: block;
+        margin-bottom: 4px;
+        color: #667085;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .chat-input {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .empty {
+        color: #667085;
+        padding: 16px;
+      }
+
+      .notice {
+        border: 1px solid #d8dee8;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 12px;
+        color: #475467;
+      }
+
+      .notice.error {
+        border-color: #f0b4b4;
+        background: #fff7f7;
+        color: #9b2c2c;
+      }
+
+      .mt {
+        margin-top: 14px;
+      }
+
+      @media (max-width: 1100px) {
+        .grid.four,
+        .grid.three,
+        .grid.two,
+        .form-grid.two {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 820px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          border-right: 0;
+          border-bottom: 1px solid #d8dee8;
+        }
+
+        .nav {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .content {
+          padding: 18px;
+        }
+
+        .topbar,
+        .card-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .chat-input {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section id="authScreen" class="auth-screen">
+      <div class="auth-card" role="dialog" aria-labelledby="authTitle" aria-modal="true">
+        <div class="auth-brand">
+          <div class="mark">AI</div>
+          <div>
+            <h1 id="authTitle">登录企业智能体中台</h1>
+            <p class="muted">使用租户账号进入工作台。</p>
+          </div>
+        </div>
+        <div id="authError" class="auth-error" style="display: none"></div>
+        <div class="auth-form mt">
+          <label>
+            租户编码
+            <input id="tenantCode" value="default" autocomplete="organization" />
+          </label>
+          <label>
+            用户名
+            <input id="username" value="admin" autocomplete="username" />
+          </label>
+          <label>
+            密码
+            <input id="password" type="password" value="Admin123!" autocomplete="current-password" />
+          </label>
+          <button class="btn primary auth-submit" id="loginBtn">继续</button>
+          <button class="auth-helper" id="demoFillBtn" type="button">填入演示账号</button>
+        </div>
+      </div>
+    </section>
+
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AI</div>
+          <div>
+            <strong>企业智能体中台</strong>
+            <span>工作台</span>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="主导航">
+          <button class="active" data-panel="dashboard"><span class="icon">□</span>驾驶舱</button>
+          <button data-panel="chat"><span class="icon">↗</span>对话</button>
+          <button data-panel="agents"><span class="icon">◇</span>智能体</button>
+          <button data-panel="kbs"><span class="icon">▤</span>知识库</button>
+          <button data-panel="workspaces"><span class="icon">▦</span>工作空间</button>
+          <button data-panel="audit"><span class="icon">✓</span>审计</button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div id="loginStatus" class="tag warn">未登录</div>
+          <div class="actions mt">
+            <button class="btn" id="refreshAllBtn">刷新</button>
+            <button class="btn danger" id="logoutBtn">退出</button>
+          </div>
+        </div>
+      </aside>
+
+      <section class="content">
+        <header class="topbar">
+          <div>
+            <h1 id="pageTitle">驾驶舱</h1>
+            <p class="muted">连接后端 8001，管理知识库、智能体、会话和运行效果。</p>
+          </div>
+          <div class="actions">
+            <span id="healthTag" class="tag warn">后端检查中</span>
+            <span id="userTag" class="tag">admin</span>
+          </div>
+        </header>
+
+        <section id="globalNotice" class="notice" style="display: none"></section>
+
+        <section id="panel-dashboard" class="panel active">
+          <div class="card">
+            <div class="card-header">
+              <h2>看板视图</h2>
+              <div class="actions">
+                <button class="btn active" id="execDashBtn">决策总览</button>
+                <button class="btn" id="techDashBtn">运行洞察</button>
+              </div>
+            </div>
+            <div id="dashboardMetrics" class="grid four"></div>
+            <div id="dashboardDetail" class="grid two mt"></div>
+          </div>
+        </section>
+
+        <section id="panel-chat" class="panel">
+          <div class="grid two">
+            <div class="card">
+              <div class="card-header">
+                <h2>智能体对话</h2>
+                <button class="btn" id="loadChatOptionsBtn">刷新选项</button>
+              </div>
+              <div class="form-grid">
+                <label>
+                  智能体
+                  <select id="chatAgentSelect"></select>
+                </label>
+                <label>
+                  工作空间
+                  <select id="chatWorkspaceSelect"></select>
+                </label>
+              </div>
+              <div class="chat-box mt">
+                <div id="messages" class="messages">
+                  <div class="empty">选择智能体后即可提问。</div>
+                </div>
+                <div class="chat-input">
+                  <textarea id="chatInput" placeholder="输入问题，例如：按街镇统计工单量排名前5"></textarea>
+                  <button class="btn primary" id="sendChatBtn">发送</button>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <h2>引用与运行信息</h2>
+              </div>
+              <div id="chatMeta" class="stack">
+                <div class="notice">本区域会显示引用数量、工具结果和 trace_id。</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-agents" class="panel">
+          <div class="grid two">
+            <div class="card">
+              <div class="card-header">
+                <h2>智能体列表</h2>
+                <button class="btn" id="loadAgentsBtn">刷新</button>
+              </div>
+              <div id="agentsTable" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <h2>创建智能体</h2>
+              </div>
+              <div class="form-grid">
+                <label>
+                  名称
+                  <input id="agentName" value="前端创建 QA Agent" />
+                </label>
+                <label>
+                  类型
+                  <select id="agentType">
+                    <option value="qa">知识问答</option>
+                    <option value="nl2data">智能问数</option>
+                  </select>
+                </label>
+                <label>
+                  模板
+                  <select id="agentTemplate"></select>
+                </label>
+                <label>
+                  模型
+                  <select id="agentModel"></select>
+                </label>
+                <label>
+                  人设
+                  <textarea id="agentPersona">基于企业知识库回答问题，回答需给出引用。</textarea>
+                </label>
+                <button class="btn primary" id="createAgentBtn">创建</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-kbs" class="panel">
+          <div class="grid two">
+            <div class="card">
+              <div class="card-header">
+                <h2>知识库列表</h2>
+                <button class="btn" id="loadKbsBtn">刷新</button>
+              </div>
+              <div id="kbsTable" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <h2>创建知识库</h2>
+              </div>
+              <div class="form-grid">
+                <label>
+                  名称
+                  <input id="kbName" value="前端测试知识库" />
+                </label>
+                <label>
+                  类型
+                  <select id="kbType">
+                    <option value="doc_regulation">制度文档</option>
+                    <option value="policy">政策</option>
+                    <option value="faq">FAQ</option>
+                    <option value="case">案例</option>
+                    <option value="material">资料</option>
+                  </select>
+                </label>
+                <label>
+                  描述
+                  <textarea id="kbDescription">用于工作台联调的知识库。</textarea>
+                </label>
+                <button class="btn primary" id="createKbBtn">创建</button>
+              </div>
+            </div>
+          </div>
+          <div class="card mt">
+            <div class="card-header">
+              <div>
+                <h2>知识检索</h2>
+                <p id="kbRetrieveHint" class="muted">选择左侧知识库后，会在这里展示命中的片段和来源。</p>
+              </div>
+              <div class="actions kb-search">
+                <input id="kbQuery" value="合同 审批" aria-label="知识库检索词" />
+              </div>
+            </div>
+            <div id="kbRetrieveResults" class="stack">
+              <div class="empty">点击知识库列表中的“检索”查看结果。</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-workspaces" class="panel">
+          <div class="grid two">
+            <div class="card">
+              <div class="card-header">
+                <h2>工作空间</h2>
+                <button class="btn" id="loadWorkspacesBtn">刷新</button>
+              </div>
+              <div id="workspacesTable" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <h2>空间配置</h2>
+              </div>
+              <div class="form-grid">
+                <label>
+                  空间名称
+                  <input id="workspaceName" value="前端工作空间" />
+                </label>
+                <button class="btn primary" id="createWorkspaceBtn">创建空间</button>
+                <label>
+                  选择空间
+                  <select id="workspaceSelect"></select>
+                </label>
+                <label>
+                  资源类型
+                  <select id="resourceType">
+                    <option value="agent">智能体</option>
+                    <option value="kb">知识库</option>
+                    <option value="model">模型</option>
+                    <option value="tool">工具</option>
+                  </select>
+                </label>
+                <label>
+                  资源
+                  <select id="resourceSelect"></select>
+                </label>
+                <button class="btn" id="attachResourceBtn">挂载资源</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-audit" class="panel">
+          <div class="card">
+            <div class="card-header">
+              <h2>审计日志</h2>
+              <div class="actions">
+                <select id="auditAction">
+                  <option value="">全部动作</option>
+                  <option value="auth.login">登录</option>
+                  <option value="agent.publish">智能体发布</option>
+                  <option value="kb.create">知识库创建</option>
+                  <option value="workspace.attach_resource">资源挂载</option>
+                </select>
+                <button class="btn" id="loadAuditBtn">查询</button>
+              </div>
+            </div>
+            <div id="auditTable" class="table-wrap"></div>
+          </div>
+        </section>
+
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        token: localStorage.getItem('access_token') || '',
+        user: null,
+        agents: [],
+        kbs: [],
+        tools: [],
+        models: [],
+        templates: [],
+        workspaces: [],
+        dashMode: 'executive',
+      }
+
+      const els = {
+        notice: document.getElementById('globalNotice'),
+        healthTag: document.getElementById('healthTag'),
+        loginStatus: document.getElementById('loginStatus'),
+        userTag: document.getElementById('userTag'),
+        pageTitle: document.getElementById('pageTitle'),
+        authScreen: document.getElementById('authScreen'),
+        authError: document.getElementById('authError'),
+        loginBtn: document.getElementById('loginBtn'),
+      }
+
+      const panelNames = {
+        dashboard: '驾驶舱',
+        chat: '对话',
+        agents: '智能体',
+        kbs: '知识库',
+        workspaces: '工作空间',
+        audit: '审计',
+      }
+
+      function showNotice(message, isError = false) {
+        els.notice.textContent = message
+        els.notice.className = isError ? 'notice error' : 'notice'
+        els.notice.style.display = 'block'
+        window.clearTimeout(showNotice.timer)
+        showNotice.timer = window.setTimeout(() => {
+          els.notice.style.display = 'none'
+        }, 4500)
+      }
+
+      function setAuthVisible(visible) {
+        els.authScreen.classList.toggle('hidden', !visible)
+        document.body.classList.toggle('auth-locked', visible)
+      }
+
+      function setAuthError(message) {
+        els.authError.textContent = message || ''
+        els.authError.style.display = message ? 'block' : 'none'
+      }
+
+      function setLoginLoading(loading) {
+        els.loginBtn.disabled = loading
+        els.loginBtn.textContent = loading ? '正在验证...' : '继续'
+      }
+
+      async function request(path, options = {}) {
+        const headers = {
+          ...(options.headers || {}),
+        }
+        if (!(options.body instanceof FormData)) {
+          headers['Content-Type'] = headers['Content-Type'] || 'application/json'
+        }
+        if (state.token) {
+          headers.Authorization = `Bearer ${state.token}`
+        }
+        const response = await fetch(`/api/v1${path}`, { ...options, headers })
+        if (!response.ok) {
+          const text = await response.text()
+          throw new Error(text || response.statusText)
+        }
+        if (response.status === 204) {
+          return null
+        }
+        return response.json()
+      }
+
+      async function login() {
+        setAuthError('')
+        setLoginLoading(true)
+        const payload = {
+          tenant_code: document.getElementById('tenantCode').value.trim(),
+          username: document.getElementById('username').value.trim(),
+          password: document.getElementById('password').value,
+        }
+        try {
+          const token = await request('/auth/login', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          })
+          state.token = token.access_token
+          localStorage.setItem('access_token', state.token)
+          await loadMe()
+          await loadAll()
+          setAuthVisible(false)
+          showNotice('登录成功，数据已加载。')
+        } catch (error) {
+          setAuthError('账号、密码或租户编码不正确，请检查后重试。')
+          throw error
+        } finally {
+          setLoginLoading(false)
+        }
+      }
+
+      async function loadMe() {
+        if (!state.token) {
+          els.loginStatus.textContent = '未登录'
+          els.loginStatus.className = 'tag warn'
+          els.userTag.textContent = '未登录'
+          setAuthVisible(true)
+          return
+        }
+        state.user = await request('/auth/me')
+        els.loginStatus.textContent = `${state.user.username} 已登录`
+        els.loginStatus.className = 'tag ok'
+        els.userTag.textContent = state.user.display_name || state.user.username
+        setAuthVisible(false)
+      }
+
+      async function loadHealth() {
+        try {
+          const health = await request('/healthz')
+          els.healthTag.textContent = `${health.service} ${health.status}`
+          els.healthTag.className = 'tag ok'
+        } catch {
+          els.healthTag.textContent = '后端未连接'
+          els.healthTag.className = 'tag warn'
+        }
+      }
+
+      async function loadAll() {
+        if (!state.token) {
+          return
+        }
+        await Promise.allSettled([
+          loadDashboard(),
+          loadAgents(),
+          loadKbs(),
+          loadModelsAndTemplates(),
+          loadTools(),
+          loadWorkspaces(),
+          loadAudit(),
+        ])
+        hydrateSelectors()
+      }
+
+      async function loadDashboard(mode = state.dashMode) {
+        state.dashMode = mode
+        document.getElementById('execDashBtn').classList.toggle('active', mode === 'executive')
+        document.getElementById('techDashBtn').classList.toggle('active', mode === 'technical')
+        const metricsEl = document.getElementById('dashboardMetrics')
+        const detailEl = document.getElementById('dashboardDetail')
+        const endpoint = mode === 'technical' ? '/dashboard/technical?period_days=7' : '/dashboard/executive?period_days=7'
+        const data = await request(endpoint)
+        const metrics = mode === 'technical'
+          ? [
+              ['运行次数', data.summary.run_count, '次'],
+              ['成功率', data.summary.success_rate, '%'],
+              ['P95 延迟', data.latency.p95_ms ?? 0, 'ms'],
+              ['Token', data.token_usage.total, ''],
+            ]
+          : data.scorecards.map((item) => [item.label, item.value, item.unit || ''])
+        metricsEl.innerHTML = metrics.map(([label, value, unit]) => `
+          <article class="card metric">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(String(value))}${unit ? `<small> ${escapeHtml(unit)}</small>` : ''}</strong>
+          </article>
+        `).join('')
+        detailEl.innerHTML = mode === 'technical'
+          ? `
+            <article class="card"><h3>Span 类型</h3>${kvList(data.spans_by_type)}</article>
+            <article class="card"><h3>最近运行</h3>${runList(data.recent_runs)}</article>
+          `
+          : `
+            <article class="card"><h3>结论摘要</h3><p class="muted">${escapeHtml(data.headline)}</p>${list(data.takeaways)}</article>
+            <article class="card"><h3>业务构成</h3>${businessMix(data.business_mix)}</article>
+          `
+      }
+
+      async function loadKbs() {
+        state.kbs = await request('/kbs')
+        document.getElementById('kbsTable').innerHTML = table(
+          ['名称', '类型', '状态', '文档'],
+          state.kbs.map((kb) => [
+            kb.name,
+            kb.type,
+            kb.status || '',
+            `<button class="btn" onclick="retrieveKb('${kb.id}')">检索</button>`,
+          ]),
+        )
+      }
+
+      async function createKb() {
+        const payload = {
+          name: document.getElementById('kbName').value.trim(),
+          type: document.getElementById('kbType').value,
+          description: document.getElementById('kbDescription').value,
+          config: {},
+          embedding_model: 'mock-embedding',
+        }
+        await request('/kbs', { method: 'POST', body: JSON.stringify(payload) })
+        await loadKbs()
+        hydrateSelectors()
+        showNotice('知识库已创建。')
+      }
+
+      async function retrieveKb(id) {
+        const kb = state.kbs.find((item) => item.id === id)
+        const query = document.getElementById('kbQuery').value.trim() || '合同 审批'
+        document.getElementById('kbRetrieveHint').textContent = `${kb?.name || '当前知识库'} · 正在检索“${query}”`
+        document.getElementById('kbRetrieveResults').innerHTML = '<div class="empty">正在检索...</div>'
+        const result = await request(`/kbs/${id}/retrieve`, {
+          method: 'POST',
+          body: JSON.stringify({ query, top_k: 3 }),
+        })
+        renderKbRetrieveResult(kb, query, result)
+        showNotice(`检索完成，返回 ${result.chunks.length} 条片段。`)
+      }
+
+      function renderKbRetrieveResult(kb, query, result) {
+        const chunks = result.chunks || []
+        document.getElementById('kbRetrieveHint').textContent =
+          `${kb?.name || '当前知识库'} · “${query}”命中 ${chunks.length} 条片段`
+        if (!chunks.length) {
+          document.getElementById('kbRetrieveResults').innerHTML = '<div class="empty">没有检索到匹配片段。</div>'
+          return
+        }
+        document.getElementById('kbRetrieveResults').innerHTML = chunks.map((chunk, index) => {
+          const citation = (result.citations || [])[index] || {}
+          const title = citation.doc_name || chunk.doc_name || chunk.document_name || `片段 ${index + 1}`
+          const content = chunk.content || chunk.text || citation.snippet || ''
+          const score = chunk.score ?? citation.score
+          const chunkId = citation.chunk_id || chunk.chunk_id || chunk.id
+          return `
+            <article class="result-card">
+              <div class="result-meta">
+                <strong>${escapeHtml(title)}</strong>
+                ${score == null ? '' : `<span class="tag">相关度 ${escapeHtml(Number(score).toFixed(3))}</span>`}
+                ${chunkId ? `<span>${escapeHtml(chunkId)}</span>` : ''}
+              </div>
+              <p>${escapeHtml(content || '后端返回了命中片段，但没有携带正文。')}</p>
+            </article>
+          `
+        }).join('')
+      }
+
+      async function loadAgents() {
+        state.agents = await request('/agents')
+        document.getElementById('agentsTable').innerHTML = table(
+          ['名称', '类型', '状态', '操作'],
+          state.agents.map((agent) => [
+            agent.name,
+            agent.type,
+            agent.status || '',
+            agent.status === 'active'
+              ? `<span class="tag ok">可用</span>`
+              : `<button class="btn" onclick="publishAgent('${agent.id}')">发布</button>`,
+          ]),
+        )
+      }
+
+      async function loadModelsAndTemplates() {
+        const [models, templates] = await Promise.all([request('/models'), request('/agent-templates')])
+        state.models = models
+        state.templates = templates
+      }
+
+      async function createAgent() {
+        const type = document.getElementById('agentType').value
+        const payload = {
+          name: document.getElementById('agentName').value.trim(),
+          type,
+          template_id: valueOrNull(document.getElementById('agentTemplate').value),
+          persona: document.getElementById('agentPersona').value,
+          model_id: valueOrNull(document.getElementById('agentModel').value),
+          kb_ids: [],
+          tool_ids: [],
+          config: { temperature: 0.2 },
+        }
+        await request('/agents', { method: 'POST', body: JSON.stringify(payload) })
+        await loadAgents()
+        hydrateSelectors()
+        showNotice('智能体已创建。')
+      }
+
+      async function publishAgent(id) {
+        await request(`/agents/${id}/publish`, { method: 'POST', body: '{}' })
+        await loadAgents()
+        hydrateSelectors()
+        showNotice('智能体已发布。')
+      }
+
+      async function loadTools() {
+        state.tools = await request('/tools')
+      }
+
+      async function loadWorkspaces() {
+        state.workspaces = await request('/workspaces')
+        document.getElementById('workspacesTable').innerHTML = table(
+          ['名称', '资源数', '创建时间'],
+          state.workspaces.map((workspace) => [
+            workspace.name,
+            workspace.resources.length,
+            formatTime(workspace.created_at),
+          ]),
+        )
+      }
+
+      async function createWorkspace() {
+        await request('/workspaces', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: document.getElementById('workspaceName').value.trim(),
+            layout: { view: 'workbench' },
+          }),
+        })
+        await loadWorkspaces()
+        hydrateSelectors()
+        showNotice('工作空间已创建。')
+      }
+
+      async function attachResource() {
+        const workspaceId = document.getElementById('workspaceSelect').value
+        const resourceType = document.getElementById('resourceType').value
+        const resourceId = document.getElementById('resourceSelect').value
+        if (!workspaceId || !resourceId) {
+          showNotice('请选择空间和资源。', true)
+          return
+        }
+        await request(`/workspaces/${workspaceId}/resources`, {
+          method: 'POST',
+          body: JSON.stringify({ resource_type: resourceType, resource_id: resourceId }),
+        })
+        await loadWorkspaces()
+        hydrateSelectors()
+        showNotice('资源已挂载。')
+      }
+
+      async function sendChat() {
+        const agentId = document.getElementById('chatAgentSelect').value
+        const workspaceId = document.getElementById('chatWorkspaceSelect').value
+        const query = document.getElementById('chatInput').value.trim()
+        if (!agentId || !query) {
+          showNotice('请选择智能体并输入问题。', true)
+          return
+        }
+        const messagesEl = document.getElementById('messages')
+        if (messagesEl.querySelector('.empty')) {
+          messagesEl.innerHTML = ''
+        }
+        appendMessage('user', query)
+        const assistant = appendMessage('assistant', '')
+        document.getElementById('chatInput').value = ''
+        const response = await fetch('/api/v1/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${state.token}`,
+          },
+          body: JSON.stringify({
+            agent_id: agentId,
+            workspace_id: workspaceId || null,
+            query,
+            max_tool_rounds: 1,
+          }),
+        })
+        if (!response.ok || !response.body) {
+          throw new Error(await response.text())
+        }
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buffer = ''
+        let meta = { citations: [], done: null }
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const parts = buffer.split('\n\n')
+          buffer = parts.pop() || ''
+          for (const part of parts) {
+            const event = parseSse(part)
+            if (event.event === 'delta') {
+              assistant.querySelector('.body').textContent += event.data.text || ''
+            }
+            if (event.event === 'citation') {
+              meta.citations.push(event.data)
+            }
+            if (event.event === 'done') {
+              meta.done = event.data
+            }
+            if (event.event === 'error') {
+              assistant.querySelector('.body').textContent += `\n${event.data.detail || '请求失败'}`
+            }
+          }
+        }
+        renderChatMeta(meta)
+      }
+
+      function appendMessage(role, text) {
+        const el = document.createElement('div')
+        el.className = `message ${role === 'user' ? 'user' : ''}`
+        el.innerHTML = `<span class="role">${role === 'user' ? '我' : '智能体'}</span><div class="body"></div>`
+        el.querySelector('.body').textContent = text
+        document.getElementById('messages').appendChild(el)
+        el.scrollIntoView({ block: 'end' })
+        return el
+      }
+
+      function renderChatMeta(meta) {
+        document.getElementById('chatMeta').innerHTML = `
+          <div class="notice">引用 ${meta.citations.length} 条，trace_id：${escapeHtml(meta.done?.trace_id || '无')}</div>
+          ${meta.done?.tool_results?.length ? `<div class="card"><h3>工具结果</h3><pre>${escapeHtml(JSON.stringify(meta.done.tool_results, null, 2))}</pre></div>` : ''}
+        `
+      }
+
+      async function loadAudit() {
+        const action = document.getElementById('auditAction').value
+        const path = action ? `/audit-logs?limit=30&action=${encodeURIComponent(action)}` : '/audit-logs?limit=30'
+        const rows = await request(path)
+        document.getElementById('auditTable').innerHTML = table(
+          ['时间', '动作', '资源', '详情'],
+          rows.map((row) => [
+            formatTime(row.created_at),
+            row.action || '',
+            `${row.resource_type || ''}<br><span class="meta">${row.resource_id || ''}</span>`,
+            `<pre>${escapeHtml(JSON.stringify(row.detail || {}, null, 2))}</pre>`,
+          ]),
+        )
+      }
+
+      function hydrateSelectors() {
+        setOptions('chatAgentSelect', state.agents.filter((a) => a.status === 'active'), '请选择智能体')
+        setOptions('chatWorkspaceSelect', state.workspaces, '不使用工作空间')
+        setOptions('workspaceSelect', state.workspaces, '请选择工作空间')
+        setOptions('agentModel', state.models.filter((m) => m.type === 'llm'), '请选择模型')
+        hydrateTemplateSelect()
+        hydrateResourceSelect()
+      }
+
+      function hydrateTemplateSelect() {
+        const type = document.getElementById('agentType').value
+        setOptions('agentTemplate', state.templates.filter((template) => template.type === type), '请选择模板')
+      }
+
+      function hydrateResourceSelect() {
+        const type = document.getElementById('resourceType').value
+        const source = type === 'agent' ? state.agents : type === 'kb' ? state.kbs : type === 'model' ? state.models : state.tools
+        setOptions('resourceSelect', source, '请选择资源')
+      }
+
+      function setOptions(id, items, emptyLabel) {
+        const select = document.getElementById(id)
+        select.innerHTML = `<option value="">${emptyLabel}</option>` + items.map((item) => {
+          const label = item.name || item.code || item.id
+          return `<option value="${item.id}">${escapeHtml(label)}</option>`
+        }).join('')
+      }
+
+      function table(headers, rows) {
+        if (!rows.length) {
+          return '<div class="empty">暂无数据</div>'
+        }
+        return `
+          <table>
+            <thead><tr>${headers.map((item) => `<th>${escapeHtml(item)}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        `
+      }
+
+      function kvList(data) {
+        const rows = Object.entries(data || {})
+        return rows.length ? `<div class="stack">${rows.map(([key, value]) => `<p><strong>${escapeHtml(key)}</strong>：${escapeHtml(String(value))}</p>`).join('')}</div>` : '<div class="empty">暂无数据</div>'
+      }
+
+      function runList(rows) {
+        return rows?.length ? list(rows.slice(0, 6).map((row) => `${row.agent_name || '未知'} · ${row.status} · ${row.latency_ms || 0}ms`)) : '<div class="empty">暂无运行记录</div>'
+      }
+
+      function businessMix(rows) {
+        return rows?.length ? list(rows.map((row) => `${row.name}：${row.count} 次，${row.ratio}%`)) : '<div class="empty">暂无数据</div>'
+      }
+
+      function list(items) {
+        return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+      }
+
+      function parseSse(text) {
+        const event = { event: 'message', data: {} }
+        for (const line of text.split('\n')) {
+          if (line.startsWith('event:')) event.event = line.slice(6).trim()
+          if (line.startsWith('data:')) {
+            try {
+              event.data = JSON.parse(line.slice(5).trim())
+            } catch {
+              event.data = {}
+            }
+          }
+        }
+        return event
+      }
+
+      function formatTime(value) {
+        if (!value) return ''
+        return new Date(value).toLocaleString('zh-CN', { hour12: false })
+      }
+
+      function valueOrNull(value) {
+        return value || null
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;')
+      }
+
+      document.querySelectorAll('.nav button').forEach((button) => {
+        button.addEventListener('click', () => {
+          document.querySelectorAll('.nav button').forEach((item) => item.classList.remove('active'))
+          button.classList.add('active')
+          document.querySelectorAll('.panel').forEach((panel) => panel.classList.remove('active'))
+          document.getElementById(`panel-${button.dataset.panel}`).classList.add('active')
+          els.pageTitle.textContent = panelNames[button.dataset.panel]
+        })
+      })
+
+      document.getElementById('loginBtn').addEventListener('click', () => login().catch(() => {}))
+      document.getElementById('demoFillBtn').addEventListener('click', () => {
+        document.getElementById('tenantCode').value = 'default'
+        document.getElementById('username').value = 'admin'
+        document.getElementById('password').value = 'Admin123!'
+        setAuthError('')
+      })
+      document.getElementById('password').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          login().catch(() => {})
+        }
+      })
+      document.getElementById('logoutBtn').addEventListener('click', () => {
+        state.token = ''
+        state.user = null
+        localStorage.removeItem('access_token')
+        els.loginStatus.textContent = '未登录'
+        els.loginStatus.className = 'tag warn'
+        els.userTag.textContent = '未登录'
+        setAuthVisible(true)
+        showNotice('已退出。')
+      })
+      document.getElementById('refreshAllBtn').addEventListener('click', () => loadAll().catch((error) => showNotice(error.message, true)))
+      document.getElementById('execDashBtn').addEventListener('click', () => loadDashboard('executive').catch((error) => showNotice(error.message, true)))
+      document.getElementById('techDashBtn').addEventListener('click', () => loadDashboard('technical').catch((error) => showNotice(error.message, true)))
+      document.getElementById('loadKbsBtn').addEventListener('click', () => loadKbs().catch((error) => showNotice(error.message, true)))
+      document.getElementById('createKbBtn').addEventListener('click', () => createKb().catch((error) => showNotice(error.message, true)))
+      document.getElementById('loadAgentsBtn').addEventListener('click', () => loadAgents().catch((error) => showNotice(error.message, true)))
+      document.getElementById('createAgentBtn').addEventListener('click', () => createAgent().catch((error) => showNotice(error.message, true)))
+      document.getElementById('loadChatOptionsBtn').addEventListener('click', () => loadAll().catch((error) => showNotice(error.message, true)))
+      document.getElementById('sendChatBtn').addEventListener('click', () => sendChat().catch((error) => showNotice(error.message, true)))
+      document.getElementById('loadWorkspacesBtn').addEventListener('click', () => loadWorkspaces().catch((error) => showNotice(error.message, true)))
+      document.getElementById('createWorkspaceBtn').addEventListener('click', () => createWorkspace().catch((error) => showNotice(error.message, true)))
+      document.getElementById('attachResourceBtn').addEventListener('click', () => attachResource().catch((error) => showNotice(error.message, true)))
+      document.getElementById('loadAuditBtn').addEventListener('click', () => loadAudit().catch((error) => showNotice(error.message, true)))
+      document.getElementById('agentType').addEventListener('change', hydrateTemplateSelect)
+      document.getElementById('resourceType').addEventListener('change', hydrateResourceSelect)
+
+      window.publishAgent = publishAgent
+      window.retrieveKb = retrieveKb
+
+      loadHealth()
+      if (state.token) {
+        loadMe().then(loadAll).catch(() => {
+          localStorage.removeItem('access_token')
+          state.token = ''
+          setAuthVisible(true)
+        })
+      } else {
+        setAuthVisible(true)
+      }
+    </script>
+  </body>
+</html>

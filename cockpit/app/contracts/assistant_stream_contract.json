@@ -1,0 +1,20 @@
+{
+  "version": "2026-07-09-source-derived-pending-probe",
+  "status": "pending_runtime_probe",
+  "source_evidence": [
+    "wanwu/internal/bff-service/model/response/assistant.go:165",
+    "wanwu/web/src/mixins/sseMethod.js:1296"
+  ],
+  "fields": {
+    "code": "code",
+    "message": "message",
+    "content": "response",
+    "finish": "finish",
+    "conversation_id": "conversationId",
+    "usage": "usage"
+  },
+  "success_code": 0,
+  "terminal_finish_values": [1, 2, 4],
+  "content_mode": "incremental",
+  "error_fields": ["response", "message"]
+}

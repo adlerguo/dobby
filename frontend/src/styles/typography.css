@@ -1,0 +1,55 @@
+:root {
+  color: var(--color-text-primary);
+  background: var(--color-bg-page);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: var(--font-size-page-title);
+  line-height: var(--line-height-tight);
+}
+
+h2 {
+  font-size: var(--font-size-section-title);
+  line-height: 1.35;
+}
+
+h3 {
+  font-size: var(--font-size-card-title);
+  line-height: 1.4;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
