@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.secrets/
 .venv/
 __pycache__/
 *.py[cod]
@@ -13,3 +14,5 @@ coverage/
 frontend/.vite/
 
 backups/
+*.tar
+*.tgz

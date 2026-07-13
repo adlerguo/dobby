@@ -37,6 +37,7 @@ class ChannelOut(BaseModel):
     rpm_limit: int | None
     status: str | None
     health: str | None
+    error: str | None = None
 
 
 class ChannelProbeIn(BaseModel):
@@ -73,6 +74,7 @@ class ChatCompletionIn(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
+    stream_options: dict[str, Any] | None = None
 
 
 class EmbeddingIn(BaseModel):

@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Any
 
 from sqlalchemy import select
@@ -8,20 +9,25 @@ from app.core.database import SessionLocal
 from app.models import ModelCatalog
 
 
-CATALOG_ITEMS: list[dict[str, Any]] = [
+MOCK_CATALOG_ITEMS: list[dict[str, Any]] = [
     {
         "provider": "mock",
         "model_code": "mock-chat",
         "display_name": "Mock Chat",
         "model_type": "llm",
-        "description": "本地可验证的 Mock 对话模型，用于开发和验收。",
+        "description": "仅用于离线演示的 Mock 对话模型，生产模式不会参与真实路由。",
         "context_window": 4096,
         "supports_streaming": True,
         "supports_tools": False,
         "supports_vision": False,
         "default_base_url": "mock://local",
         "protocol": "mock",
-        "recommended_parameters": {"temperature": 0.2, "max_tokens": 512, "availability": "verified_local"},
+        "recommended_parameters": {
+            "temperature": 0.2,
+            "max_tokens": 512,
+            "availability": "demo_only",
+            "is_demo": True,
+        },
         "official_url": None,
         "pricing": {"status": "free_local"},
         "icon": "mock",
@@ -33,20 +39,24 @@ CATALOG_ITEMS: list[dict[str, Any]] = [
         "model_code": "mock-embedding",
         "display_name": "Mock Embedding",
         "model_type": "embedding",
-        "description": "本地可验证的 Mock 向量模型，用于知识库入库和检索验收。",
+        "description": "仅用于离线演示的 Mock 向量模型，生产模式不会参与真实路由。",
         "context_window": 8192,
         "supports_streaming": False,
         "supports_tools": False,
         "supports_vision": False,
         "default_base_url": "mock://local",
         "protocol": "mock",
-        "recommended_parameters": {"dimensions": 1536, "availability": "verified_local"},
+        "recommended_parameters": {"dimensions": 1536, "availability": "demo_only", "is_demo": True},
         "official_url": None,
         "pricing": {"status": "free_local"},
         "icon": "mock",
         "sort_order": 11,
         "is_active": True,
     },
+]
+
+
+REAL_CATALOG_ITEMS: list[dict[str, Any]] = [
     {
         "provider": "deepseek",
         "model_code": "deepseek-chat",
@@ -171,7 +181,11 @@ async def main() -> None:
 
 
 async def seed_model_catalog(db: AsyncSession) -> None:
-    for item in CATALOG_ITEMS:
+    demo_mode = os.getenv("SEED_DEMO_MODE", "").lower() in {"1", "true", "yes"}
+    items = [*REAL_CATALOG_ITEMS, *(MOCK_CATALOG_ITEMS if demo_mode else [])]
+    if not demo_mode:
+        await disable_demo_catalog_items(db)
+    for item in items:
         result = await db.execute(select(ModelCatalog).where(ModelCatalog.model_code == item["model_code"]))
         existing = result.scalar_one_or_none()
         if existing is None:
@@ -179,6 +193,19 @@ async def seed_model_catalog(db: AsyncSession) -> None:
             continue
         for key, value in item.items():
             setattr(existing, key, value)
+
+
+async def disable_demo_catalog_items(db: AsyncSession) -> None:
+    for model_code in {"mock-chat", "mock-embedding"}:
+        result = await db.execute(select(ModelCatalog).where(ModelCatalog.model_code == model_code))
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            existing.is_active = False
+            existing.recommended_parameters = {
+                **(existing.recommended_parameters or {}),
+                "availability": "demo_only",
+                "is_demo": True,
+            }
 
 
 if __name__ == "__main__":

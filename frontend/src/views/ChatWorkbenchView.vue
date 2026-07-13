@@ -73,6 +73,13 @@ function parseSseEvent(raw: string) {
   return event
 }
 
+function friendlyChatError(detail: string) {
+  if (detail === 'no_active_model_channel') return '请先在模型中心配置模型 API 并测试连通'
+  if (detail.startsWith('provider_http_')) return `模型渠道调用失败：${detail}，请检查 API Key、额度或供应商地址`
+  if (detail === 'maas_call_failed') return '模型网关调用失败，请检查模型渠道配置'
+  return detail
+}
+
 async function sendMessage() {
   const query = input.value.trim()
   if (!agentId.value || !query) return
@@ -134,8 +141,9 @@ async function sendMessage() {
           })
         }
         if (event.event === 'error') {
-          assistant.text += `\n${event.data.detail || '请求失败'}`
-          traceCards.value.push({ title: '运行错误', status: 'error', detail: event.data.detail || '请求失败' })
+          const detail = friendlyChatError(event.data.detail || '请求失败')
+          assistant.text += `\n${detail}`
+          traceCards.value.push({ title: '运行错误', status: 'error', detail })
         }
       }
     }
@@ -196,7 +204,7 @@ onMounted(loadOptions)
         </div>
         <div class="chat-box mt">
           <div class="messages">
-            <EmptyState v-if="messages.length === 0" title="还没有对话" description="选择智能体后即可发送问题，验证回答质量和引用。" />
+            <EmptyState v-if="messages.length === 0" title="还没有对话" description="选择智能体后即可发送问题。若没有可用模型，请先在模型中心配置模型 API 并测试连通。" />
             <div v-for="(message, index) in messages" :key="index" class="message" :class="{ user: message.role === 'user' }">
               <strong>{{ message.role === 'user' ? '我' : '智能体' }}</strong>
               <div v-if="message.role === 'user'" class="message-text">{{ message.text }}</div>

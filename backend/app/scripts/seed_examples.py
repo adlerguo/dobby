@@ -1,4 +1,5 @@
 import asyncio
+import os
 from uuid import UUID
 
 from sqlalchemy import select
@@ -17,6 +18,9 @@ QA_DOC = """企业合同审批需要重点检查主体资格、授权范围、�
 
 
 async def main() -> None:
+    if os.getenv("SEED_DEMO_MODE", "").lower() not in {"1", "true", "yes"}:
+        print("SEED_DEMO_MODE is not true; skip mock/demo example seed.")
+        return
     async with SessionLocal() as db:
         await ensure_default_seed(db)
         tenant = await get_default_tenant(db)

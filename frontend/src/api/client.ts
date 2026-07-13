@@ -44,7 +44,9 @@ export async function apiFetch<T>(path: string, options: ApiRequestInit = {}): P
     const payload = await response.json().catch(() => ({} as ApiErrorPayload))
     const detail = payload.detail
     if (detail && typeof detail === 'object') {
-      throw new Error(detail.code || detail.summary || `请求失败：${response.status}`)
+      const code = detail.code || ''
+      const summary = detail.summary || ''
+      throw new Error(code && summary ? `${code}: ${summary}` : code || summary || `请求失败：${response.status}`)
     }
     throw new Error(detail || payload.message || `请求失败：${response.status}`)
   }

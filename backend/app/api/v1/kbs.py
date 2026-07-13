@@ -19,6 +19,8 @@ router = APIRouter(tags=["knowledge_bases"])
 
 def kb_error(exc: ValueError) -> HTTPException:
     detail = str(exc)
+    if detail == "no_active_model_channel":
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     if detail.endswith("_exists"):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     if detail.endswith("_not_found"):
@@ -246,15 +248,18 @@ async def retrieve_kb_chunks(
     auth: AuthContext = Depends(get_current_auth),
     db: AsyncSession = Depends(get_db),
 ) -> RetrieveOut:
-    result = await retrieve_chunks(
-        db,
-        tenant_id=auth.tenant_id,
-        kb_id=kb_id,
-        query=payload.query,
-        top_k=payload.top_k,
-        match_type=payload.match_type,
-        score_threshold=payload.score_threshold,
-    )
+    try:
+        result = await retrieve_chunks(
+            db,
+            tenant_id=auth.tenant_id,
+            kb_id=kb_id,
+            query=payload.query,
+            top_k=payload.top_k,
+            match_type=payload.match_type,
+            score_threshold=payload.score_threshold,
+        )
+    except ValueError as exc:
+        raise kb_error(exc) from exc
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
     return result

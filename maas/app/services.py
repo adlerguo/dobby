@@ -2,6 +2,7 @@ import hashlib
 import json
 import random
 import time
+from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import UUID
 
@@ -142,12 +143,23 @@ async def list_candidate_channels(db: AsyncSession, model_name: str, model_type:
         .order_by(model_channels.c.weight.desc(), model_channels.c.created_at.asc())
     )
     result = await db.execute(stmt)
-    return [dict(row) for row in result.mappings().all()]
+    candidates = [dict(row) for row in result.mappings().all()]
+    if settings.production_mode:
+        candidates = [candidate for candidate in candidates if not is_mock_channel(candidate)]
+    return candidates
 
 
 def weighted_choice(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    if settings.production_mode:
+        candidates = [candidate for candidate in candidates if not is_mock_channel(candidate)]
+    if not candidates:
+        raise ValueError("no_active_model_channel")
     weights = [max(int(candidate.get("weight") or 1), 1) for candidate in candidates]
     return random.choices(candidates, weights=weights, k=1)[0]
+
+
+def is_mock_channel(channel: dict[str, Any]) -> bool:
+    return str(channel.get("base_url") or "").startswith("mock://")
 
 
 def channel_out(row: dict[str, Any]) -> ChannelOut:
@@ -233,6 +245,41 @@ async def proxy_openai_with_key(
         )
         response.raise_for_status()
         return response.json()
+
+
+async def proxy_openai_stream(
+    path: str,
+    channel: dict[str, Any],
+    payload: dict[str, Any],
+) -> AsyncGenerator[dict[str, Any], None]:
+    api_key = decrypt_secret(channel["api_key_enc"])
+    base_url = channel["base_url"].rstrip("/")
+    request_payload = apply_request_defaults(payload, channel)
+    request_payload["stream"] = True
+    request_payload.setdefault("stream_options", {"include_usage": True})
+    provider_config = channel.get("provider_config") or {}
+    upstream_model = provider_config.get("catalog_code") or provider_config.get("upstream_model")
+    if upstream_model:
+        request_payload["model"] = upstream_model
+    if channel.get("provider") == "deepseek" and path == "/v1/chat/completions":
+        request_payload["model"] = upstream_model or "deepseek-chat"
+
+    async with httpx.AsyncClient(timeout=None) as client:
+        async with client.stream(
+            "POST",
+            f"{base_url}{path}",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=request_payload,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith("data:"):
+                    data = line[5:].strip()
+                    yield {"type": "data", "data": data, "raw": f"data: {data}\n\n"}
+                else:
+                    yield {"type": "raw", "raw": f"{line}\n"}
 
 
 async def probe_transient_channel(payload: ChannelProbeIn) -> ChannelProbeOut:

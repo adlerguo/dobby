@@ -21,6 +21,7 @@ from app.services import (
     mock_chat_response,
     mock_embedding_response,
     proxy_openai,
+    proxy_openai_stream,
     record_usage,
     set_cached,
     weighted_choice,
@@ -43,13 +44,12 @@ async def chat_completions(
 ):
     candidates = await list_candidate_channels(db, payload.model, "llm")
     if not candidates:
-        raise HTTPException(status_code=404, detail="model_channel_not_found")
+        raise HTTPException(status_code=409, detail="no_active_model_channel")
 
     request_payload = payload.model_dump(exclude_none=True)
     if payload.stream:
-        channel = weighted_choice(candidates)
         return StreamingResponse(
-            mock_chat_stream(payload.model, [message.model_dump() for message in payload.messages]),
+            stream_chat_completion(payload, candidates, db, redis),
             media_type="text/event-stream",
         )
 
@@ -76,9 +76,9 @@ async def chat_completions(
             await set_cached(redis, "chat", request_payload, response)
             await record_usage(db, channel, response, latency_ms=latency_ms, cache_hit=False)
             return response
-        except Exception:
+        except Exception as exc:
             await mark_channel_health(db, channel["id"], "failed")
-            last_error = "channel_failed"
+            last_error = summarize_runtime_error(exc)
 
     raise HTTPException(status_code=429 if last_error == "rate_limited" else 502, detail=last_error)
 
@@ -91,7 +91,7 @@ async def embeddings(
 ):
     candidates = await list_candidate_channels(db, payload.model, "embedding")
     if not candidates:
-        raise HTTPException(status_code=404, detail="model_channel_not_found")
+        raise HTTPException(status_code=409, detail="no_active_model_channel")
 
     request_payload = payload.model_dump(exclude_none=True)
 
@@ -118,11 +118,70 @@ async def embeddings(
             await set_cached(redis, "embedding", effective_payload, response)
             await record_usage(db, channel, response, latency_ms=latency_ms, cache_hit=False)
             return response
-        except Exception:
+        except Exception as exc:
             await mark_channel_health(db, channel["id"], "failed")
-            last_error = "channel_failed"
+            last_error = summarize_runtime_error(exc)
 
     raise HTTPException(status_code=429 if last_error == "rate_limited" else 502, detail=last_error)
+
+
+def summarize_runtime_error(exc: Exception) -> str:
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"provider_http_{exc.response.status_code}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "provider_timeout"
+    if isinstance(exc, httpx.RequestError):
+        return "provider_request_failed"
+    return f"provider_call_failed:{exc.__class__.__name__}"
+
+
+async def stream_chat_completion(
+    payload: ChatCompletionIn,
+    candidates: list[dict],
+    db: AsyncSession,
+    redis: Redis,
+) -> AsyncGenerator[str, None]:
+    request_payload = payload.model_dump(exclude_none=True)
+    started = time.perf_counter()
+    last_error = "model_call_failed"
+    for channel in candidates:
+        if not await consume_rpm(redis, channel):
+            last_error = "rate_limited"
+            continue
+        try:
+            if channel["base_url"].startswith("mock://"):
+                async for chunk in mock_chat_stream(payload.model, [message.model_dump() for message in payload.messages]):
+                    yield chunk
+                response = mock_chat_response(payload.model, [message.model_dump() for message in payload.messages])
+                await record_usage(db, channel, response, latency_ms=int((time.perf_counter() - started) * 1000), cache_hit=False)
+                return
+
+            usage: dict = {}
+            async for event in proxy_openai_stream("/v1/chat/completions", channel, request_payload):
+                if event["type"] == "data":
+                    data = event["data"]
+                    if data != "[DONE]":
+                        try:
+                            payload_json = json.loads(data)
+                            if payload_json.get("usage"):
+                                usage = payload_json["usage"]
+                        except json.JSONDecodeError:
+                            pass
+                yield event["raw"]
+            await mark_channel_health(db, channel["id"], "ok")
+            response = {"usage": usage}
+            await record_usage(db, channel, response, latency_ms=int((time.perf_counter() - started) * 1000), cache_hit=False)
+            return
+        except Exception as exc:
+            await mark_channel_health(db, channel["id"], "failed")
+            last_error = summarize_runtime_error(exc)
+            continue
+
+    error = {"error": {"message": last_error, "type": "maas_stream_error"}}
+    yield f"data: {json.dumps(error, ensure_ascii=False)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 async def mock_chat_stream(model: str, messages: list[dict[str, str | None]]) -> AsyncGenerator[str, None]:

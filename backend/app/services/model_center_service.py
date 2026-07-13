@@ -85,7 +85,11 @@ async def test_existing_channel(
         raise ValueError("channel_not_found")
     maas_channel = await probe_maas_channel(channel_id)
     await db.refresh(channel)
-    test_result = ConnectionTestOut(ok=maas_channel.health == "ok", health=maas_channel.health or "failed")
+    test_result = ConnectionTestOut(
+        ok=maas_channel.health == "ok",
+        health=maas_channel.health or "failed",
+        error=maas_channel.error,
+    )
     return ModelCenterChannelTestOut(
         channel=ModelChannelOut.model_validate(channel),
         test_result=test_result,

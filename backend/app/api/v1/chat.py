@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_current_auth
 from app.core.database import SessionLocal, get_db
 from app.models import Conversation, Message
-from app.orchestrator import dispatch_single_agent
+from app.orchestrator import stream_agent_events as run_stream_agent_events
 from app.schemas import AgentRunIn, ChatIn, ConversationOut, MessageOut
 
 router = APIRouter(tags=["chat"])
@@ -93,7 +93,7 @@ async def list_conversation_messages(
 async def stream_chat_events(auth: AuthContext, payload: ChatIn) -> AsyncGenerator[str, None]:
     async with SessionLocal() as db:
         try:
-            result = await dispatch_single_agent(
+            async for event in run_stream_agent_events(
                 db,
                 tenant_id=auth.tenant_id,
                 user_id=auth.user_id,
@@ -110,33 +110,11 @@ async def stream_chat_events(auth: AuthContext, payload: ChatIn) -> AsyncGenerat
                     max_tool_rounds=payload.max_tool_rounds,
                     tool_calls=payload.tool_calls,
                 ),
-            )
+            ):
+                yield sse_event(event["event"], event["data"])
         except ValueError as exc:
             yield sse_event("error", {"detail": str(exc)})
             return
-
-    if result is None:
-        yield sse_event("error", {"detail": "agent_not_found"})
-        return
-
-    for citation in result.citations:
-        yield sse_event("citation", citation.model_dump(mode="json"))
-
-    for chunk in chunk_text(result.answer):
-        yield sse_event("delta", {"text": chunk})
-
-    yield sse_event(
-        "done",
-        {
-            "conversation_id": str(result.conversation_id),
-            "user_message_id": str(result.user_message_id),
-            "assistant_message_id": str(result.assistant_message_id),
-            "trace_id": str(result.trace_id),
-            "usage": result.usage,
-            "tool_results": [tool.model_dump(mode="json") for tool in result.tool_results],
-            "citation_count": len(result.citations),
-        },
-    )
 
 
 async def load_conversation(db: AsyncSession, *, tenant_id: UUID, conversation_id: UUID) -> Conversation | None:
@@ -149,8 +127,3 @@ async def load_conversation(db: AsyncSession, *, tenant_id: UUID, conversation_i
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-
-def chunk_text(text: str, size: int = 12) -> list[str]:
-    if not text:
-        return [""]
-    return [text[index : index + size] for index in range(0, len(text), size)]

@@ -35,6 +35,8 @@ def agent_error(exc: ValueError) -> HTTPException:
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
     if detail in {"maas_call_failed"}:
         return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+    if detail == "no_active_model_channel":
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     if detail.endswith("_not_found") or detail.startswith(("kb_not_found:", "tool_not_found:")):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)

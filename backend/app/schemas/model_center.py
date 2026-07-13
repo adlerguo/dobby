@@ -46,6 +46,7 @@ class MaasChannelOut(BaseModel):
     rpm_limit: int | None = None
     status: str | None = None
     health: str | None = None
+    error: str | None = None
 
 
 class MaasProbeOut(BaseModel):

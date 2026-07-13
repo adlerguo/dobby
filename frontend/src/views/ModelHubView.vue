@@ -44,12 +44,12 @@ const modelTypes = [
 
 const createForm = reactive({
   name: '',
-  provider: 'mock',
+  provider: '',
   type: 'llm',
   display_name: '',
   description: '',
   with_channel: true,
-  base_url: 'mock://local',
+  base_url: '',
   api_key: '',
   weight: 1,
 })
@@ -80,19 +80,24 @@ function displayName(model: ModelHub) {
 
 function resetCreateForm() {
   createForm.name = ''
-  createForm.provider = 'mock'
+  createForm.provider = ''
   createForm.type = 'llm'
   createForm.display_name = ''
   createForm.description = ''
   createForm.with_channel = true
-  createForm.base_url = 'mock://local'
+  createForm.base_url = ''
   createForm.api_key = ''
   createForm.weight = 1
 }
 
 function friendlyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
-  if (message === 'connection_test_failed') return '连接测试失败，请检查 API Key 和地址'
+  if (message.startsWith('connection_test_failed')) {
+    const summary = message.includes(':') ? message.split(':').slice(1).join(':').trim() : ''
+    return `连接测试失败，请检查 API Key 和地址${summary ? `（${summary}）` : ''}`
+  }
+  if (message === 'no_active_model_channel') return '请先在模型中心配置模型 API 并测试连通'
+  if (message.startsWith('provider_http_')) return `供应商调用失败：${message}`
   if (message === 'model_name_exists') return '模型名已存在'
   if (message === 'model_channel_create_failed') return '默认渠道创建失败，请检查 MaaS 服务'
   if (message === 'protocol_not_supported') return '该协议暂不支持一键接入'
@@ -255,14 +260,14 @@ async function connectCatalogModel() {
       weight: connectForm.weight || 1,
       test_after_create: true,
     }
-    await apiFetch<ModelCenterConnectResponse>(`/model-center/catalog/${selectedCatalog.value.id}/connect`, {
+    const result = await apiFetch<ModelCenterConnectResponse>(`/model-center/catalog/${selectedCatalog.value.id}/connect`, {
       method: 'POST',
       body: { ...body },
     })
     connectDialog.value = false
     resetConnectForm()
     await loadModels()
-    ElMessage.success('模型已接入')
+    ElMessage.success(result.test_result.ok ? '模型已接入，连接测试通过' : '模型已接入，但连接测试失败')
   } catch (error) {
     connectError.value = friendlyError(error)
   } finally {
@@ -278,7 +283,9 @@ async function testChannel(channel: ModelChannel) {
     })
     const index = channels.value.findIndex((item) => item.id === channel.id)
     if (index >= 0) channels.value[index] = result.channel
-    ElMessage.success(result.test_result.ok ? '连接测试通过' : '连接测试失败')
+    ElMessage[result.test_result.ok ? 'success' : 'error'](
+      result.test_result.ok ? '连接测试通过' : `连接测试失败：${result.test_result.error || result.test_result.health}`,
+    )
   } catch (error) {
     ElMessage.error(friendlyError(error))
   } finally {
@@ -294,6 +301,7 @@ function catalogAvailabilityLabel(item: ModelCatalog) {
   const availability = catalogAvailability(item)
   if (availability === 'verified_local') return '可直接体验'
   if (availability === 'needs_real_key') return '需自备 API Key'
+  if (availability === 'demo_only') return '仅演示'
   return availability || '待确认'
 }
 
@@ -321,6 +329,15 @@ onMounted(refreshAll)
         <el-button type="primary" :icon="Plus" @click="createDialog = true">新建模型</el-button>
       </template>
     </PageHeader>
+
+    <el-alert
+      v-if="models.length === 0"
+      title="请先在模型中心配置模型 API 并测试连通"
+      description="生产模式不会默认返回 mock 假答案。请从模型广场选择 DeepSeek、OpenAI 或通义等真实模型，填入 API Key，通过连接测试后再创建智能体或知识库。"
+      type="warning"
+      show-icon
+      :closable="false"
+    />
 
     <div class="metric-grid model-metrics">
       <section class="panel-card stat-card">
@@ -402,7 +419,7 @@ onMounted(refreshAll)
       </SectionHeader>
       <el-table v-loading="loading" :data="models" border>
         <template #empty>
-          <EmptyState title="还没有接入模型" description="可以从模型广场一键接入，或手动创建一个运行时模型。" action-text="新建模型" @action="createDialog = true" />
+          <EmptyState title="请先配置真实模型 API" description="生产模式不会静默返回 mock 假答案。请从模型广场接入真实供应商并完成连通性测试。" action-text="刷新模型广场" @action="loadCatalog" />
         </template>
         <el-table-column label="展示名" min-width="180">
           <template #default="{ row }">
@@ -441,7 +458,7 @@ onMounted(refreshAll)
           <el-input v-model="createForm.name" placeholder="runtime 调用名，例如 ui-test-model" />
         </el-form-item>
         <el-form-item label="供应商">
-          <el-input v-model="createForm.provider" placeholder="mock / deepseek / openai" />
+          <el-input v-model="createForm.provider" placeholder="deepseek / openai / qwen" />
         </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="createForm.type" class="full-width-control">
@@ -459,7 +476,7 @@ onMounted(refreshAll)
         </el-form-item>
         <template v-if="createForm.with_channel">
           <el-form-item label="渠道地址" required>
-            <el-input v-model="createForm.base_url" placeholder="mock://local 或 https://api.example.com" />
+            <el-input v-model="createForm.base_url" placeholder="https://api.deepseek.com 或供应商兼容地址" />
           </el-form-item>
           <el-form-item label="密钥" required>
             <el-input v-model="createForm.api_key" type="password" show-password autocomplete="new-password" />

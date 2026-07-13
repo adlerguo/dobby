@@ -1,6 +1,8 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.secrets import resolve_runtime_secret
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -18,9 +20,15 @@ class Settings(BaseSettings):
     minio_secure: bool = Field(default=False)
     maas_base_url: str = Field(default="http://maas:8100")
     sandbox_base_url: str = Field(default="http://sandbox:8200")
-    jwt_secret: str = Field(default="change-me")
+    jwt_secret: str | None = Field(default=None)
     jwt_access_ttl: int = Field(default=3600)
     jwt_refresh_ttl: int = Field(default=604800)
 
 
 settings = Settings()
+settings.jwt_secret = resolve_runtime_secret(
+    env_name="JWT_SECRET",
+    file_name="backend_jwt_secret",
+    label="Backend JWT_SECRET",
+    configured_value=settings.jwt_secret,
+)

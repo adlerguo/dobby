@@ -1,3 +1,7 @@
 node_modules
 .vite
+dist
+.git
+.DS_Store
+backups
 npm-debug.log

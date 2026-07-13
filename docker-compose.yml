@@ -53,8 +53,11 @@ services:
       MINIO_SECRET: ${MINIO_SECRET:-minioadmin}
       MAAS_BASE_URL: ${MAAS_BASE_URL:-http://maas:8100}
       SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-http://sandbox:8200}
-      JWT_SECRET: ${JWT_SECRET:-change-me}
+      APP_SECRETS_DIR: /data/secrets
+      AUTO_GENERATE_SECRETS: "true"
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-3600}
+    volumes:
+      - app_secrets:/data/secrets
     ports:
       - "8001:8001"
     depends_on:
@@ -75,7 +78,11 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:pass@postgres:5432/eap}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      MAAS_ENCRYPTION_KEY: ${MAAS_ENCRYPTION_KEY:-change-me-32-byte-key}
+      APP_SECRETS_DIR: /data/secrets
+      AUTO_GENERATE_SECRETS: "true"
+      PRODUCTION_MODE: ${PRODUCTION_MODE:-true}
+    volumes:
+      - app_secrets:/data/secrets
     ports:
       - "8100:8100"
     depends_on:
@@ -102,3 +109,4 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  app_secrets:
