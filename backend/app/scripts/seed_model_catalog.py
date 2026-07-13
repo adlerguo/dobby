@@ -142,6 +142,25 @@ CATALOG_ITEMS: list[dict[str, Any]] = [
         "sort_order": 40,
         "is_active": True,
     },
+    {
+        "provider": "qwen",
+        "model_code": "text-embedding-v4",
+        "display_name": "通义 text-embedding-v4",
+        "model_type": "embedding",
+        "description": "通义千问文本向量模型，DashScope OpenAI 兼容模式，预置 dimensions=1536 以适配当前 pgvector 列。",
+        "context_window": 8192,
+        "supports_streaming": False,
+        "supports_tools": False,
+        "supports_vision": False,
+        "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+        "protocol": "openai_compatible",
+        "recommended_parameters": {"dimensions": 1536, "availability": "needs_real_key"},
+        "official_url": "https://help.aliyun.com/zh/model-studio/embedding-interfaces-compatible-with-openai",
+        "pricing": {"status": "see_official"},
+        "icon": "qwen",
+        "sort_order": 41,
+        "is_active": True,
+    },
 ]
 
 

@@ -301,6 +301,11 @@ function catalogAvailabilityType(item: ModelCatalog) {
   return catalogAvailability(item)
 }
 
+function modelTypeLabel(value: string) {
+  const found = modelTypes.find((item) => item.value === value)
+  return found?.label || value
+}
+
 function formatContextWindow(value?: number | null) {
   if (!value) return '未标注'
   return value >= 1000 ? `${Math.round(value / 1000)}K` : String(value)
@@ -361,7 +366,7 @@ onMounted(refreshAll)
           </div>
           <p class="catalog-desc">{{ item.description || '暂无简介' }}</p>
           <div class="catalog-meta">
-            <span>{{ item.model_type }}</span>
+            <span>{{ modelTypeLabel(item.model_type) }}</span>
             <span>{{ item.protocol }}</span>
             <span>上下文 {{ formatContextWindow(item.context_window) }}</span>
           </div>
@@ -478,6 +483,10 @@ onMounted(refreshAll)
             <strong>{{ selectedCatalog.display_name }}</strong>
           </div>
           <div>
+            <span>类型</span>
+            <strong>{{ modelTypeLabel(selectedCatalog.model_type) }}</strong>
+          </div>
+          <div>
             <span>供应商</span>
             <strong>{{ selectedCatalog.provider }}</strong>
           </div>
@@ -490,6 +499,13 @@ onMounted(refreshAll)
             <strong>{{ selectedCatalog.model_code }}</strong>
           </div>
         </div>
+        <el-alert
+          :title="`正在接入 ${modelTypeLabel(selectedCatalog.model_type)} 类型模型。知识库 Embedding 下拉只会显示 Embedding 类型，请确认没有从 LLM 目录项接入向量模型。`"
+          type="info"
+          show-icon
+          :closable="false"
+          class="connect-error"
+        />
         <el-alert
           v-if="connectError"
           :title="connectError"

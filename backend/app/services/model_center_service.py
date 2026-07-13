@@ -57,13 +57,13 @@ async def connect_catalog_model(
         api_key=payload.api_key,
         weight=payload.weight,
     )
-    channel = await probe_maas_channel(channel.id)
     model = await load_model_by_name(db, payload.runtime_name)
     if model is None:
         raise ValueError("model_create_failed")
     apply_catalog_model_metadata(model, catalog, base_url=base_url)
     await db.commit()
     await db.refresh(model)
+    channel = await probe_maas_channel(channel.id)
     stored_channel = await db.get(ModelChannel, channel.id)
     if stored_channel is None:
         raise ValueError("model_channel_create_failed")
@@ -112,6 +112,7 @@ async def probe_transient_catalog_channel(
         "base_url": base_url,
         "api_key": api_key,
         "protocol": catalog.protocol,
+        "request_defaults": catalog_request_defaults(catalog),
     }
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -185,4 +186,11 @@ def apply_catalog_model_metadata(model: Model, catalog: ModelCatalog, *, base_ur
         "supports_streaming": catalog.supports_streaming,
         "supports_tools": catalog.supports_tools,
         "supports_vision": catalog.supports_vision,
+        "recommended_parameters": catalog.recommended_parameters or {},
+        "request_defaults": catalog_request_defaults(catalog),
     }
+
+
+def catalog_request_defaults(catalog: ModelCatalog) -> dict:
+    excluded = {"availability"}
+    return {key: value for key, value in (catalog.recommended_parameters or {}).items() if key not in excluded}

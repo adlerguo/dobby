@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
@@ -15,6 +16,7 @@ class Candidate:
     id: UUID
     doc_id: UUID
     doc_name: str
+    seq: int | None
     content: str
     meta: dict
     vector_rank: int | None = None
@@ -30,25 +32,41 @@ async def retrieve_chunks(
     kb_id: UUID,
     query: str,
     top_k: int,
+    match_type: Literal["hybrid", "vector", "keyword"] = "hybrid",
+    score_threshold: float | None = None,
 ) -> RetrieveOut | None:
     kb = await get_kb(db, tenant_id=tenant_id, kb_id=kb_id)
     if kb is None or kb.status == "archived":
         return None
 
-    query_embedding = (await embed_texts(model=kb.embedding_model or "mock-embedding", texts=[query]))[0]
     recall_k = max(top_k * 4, 20)
-    vector_candidates = await vector_search(db, tenant_id, kb_id, query_embedding, recall_k)
-    text_candidates = await text_search(db, tenant_id, kb_id, query, recall_k)
+    vector_candidates: list[Candidate] = []
+    text_candidates: list[Candidate] = []
+
+    if match_type in {"hybrid", "vector"}:
+        query_embedding = (await embed_texts(model=kb.embedding_model or "mock-embedding", texts=[query]))[0]
+        vector_candidates = await vector_search(db, tenant_id, kb_id, query_embedding, recall_k)
+        if score_threshold and score_threshold > 0:
+            vector_candidates = [
+                candidate for candidate in vector_candidates if (candidate.vector_score or 0) >= score_threshold
+            ]
+    if match_type in {"hybrid", "keyword"}:
+        text_candidates = await text_search(db, tenant_id, kb_id, query, recall_k)
+
     merged = merge_candidates(vector_candidates, text_candidates, top_k)
 
     chunks = [
         RetrievedChunkOut(
             id=candidate.id,
             doc_id=candidate.doc_id,
+            doc_name=candidate.doc_name,
+            seq=candidate.seq,
             content=candidate.content,
+            content_length=len(candidate.content),
             score=hybrid_score(candidate),
             vector_score=candidate.vector_score,
             text_score=candidate.text_score,
+            match_channels=match_channels(candidate),
             meta=candidate.meta or {},
         )
         for candidate in merged
@@ -86,6 +104,7 @@ async def vector_search(
             Chunk.id,
             Chunk.doc_id,
             Document.name.label("doc_name"),
+            Chunk.seq,
             Chunk.content,
             Chunk.meta,
             (1 - distance).label("score"),
@@ -103,6 +122,7 @@ async def vector_search(
                 id=row["id"],
                 doc_id=row["doc_id"],
                 doc_name=row["doc_name"],
+                seq=row["seq"],
                 content=row["content"],
                 meta=row["meta"] or {},
                 vector_rank=rank,
@@ -121,6 +141,7 @@ async def text_search(db: AsyncSession, tenant_id: UUID, kb_id: UUID, query: str
             Chunk.id,
             Chunk.doc_id,
             Document.name.label("doc_name"),
+            Chunk.seq,
             Chunk.content,
             Chunk.meta,
             score.label("score"),
@@ -142,6 +163,7 @@ async def text_search(db: AsyncSession, tenant_id: UUID, kb_id: UUID, query: str
                 id=row["id"],
                 doc_id=row["doc_id"],
                 doc_name=row["doc_name"],
+                seq=row["seq"],
                 content=row["content"],
                 meta=row["meta"] or {},
                 text_rank=rank,
@@ -173,6 +195,15 @@ def hybrid_score(candidate: Candidate) -> float:
     if candidate.text_rank is not None:
         score += 1 / (60 + candidate.text_rank)
     return round(score, 6)
+
+
+def match_channels(candidate: Candidate) -> list[Literal["vector", "keyword"]]:
+    channels: list[Literal["vector", "keyword"]] = []
+    if candidate.vector_rank is not None:
+        channels.append("vector")
+    if candidate.text_rank is not None:
+        channels.append("keyword")
+    return channels
 
 
 def make_snippet(content: str, query: str, size: int = 160) -> str:

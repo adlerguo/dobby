@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -71,20 +71,45 @@ class DocumentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DocumentChunkOut(BaseModel):
+    id: UUID
+    seq: int | None
+    content: str
+    content_length: int
+    tokens: int | None
+    meta: dict[str, Any]
+    has_embedding: bool
+    created_at: datetime
+
+
+class ReindexOut(BaseModel):
+    kb_id: UUID
+    document_count: int
+    status: str
+
+
 class RetrieveIn(BaseModel):
     model_config = {"extra": "forbid"}
 
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
+    match_type: Literal["hybrid", "vector", "keyword"] = "hybrid"
+    # Applies only to vector_score (cosine similarity, 0-1 range). Keyword-only
+    # candidates have no vector_score and are not filtered by this threshold.
+    score_threshold: float | None = Field(default=None, ge=0, le=1)
 
 
 class RetrievedChunkOut(BaseModel):
     id: UUID
     doc_id: UUID
+    doc_name: str
+    seq: int | None = None
     content: str
+    content_length: int
     score: float
     vector_score: float | None = None
     text_score: float | None = None
+    match_channels: list[Literal["vector", "keyword"]]
     meta: dict[str, Any]
 
 

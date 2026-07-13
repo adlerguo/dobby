@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Agent, Conversation, Message, Tool
+from app.orchestrator.answer_style import ANSWER_STYLE_PROMPT
 from app.rag.retrieve import retrieve_chunks
 from app.repositories import AgentRepository
 from app.schemas import CitationOut, ContextBuildOut, ContextMessageOut, ContextToolOut, RetrievedChunkOut
@@ -64,6 +65,7 @@ async def build_agent_context(
         query=query,
         top_k=rag_config["top_k"],
         score_threshold=rag_config["score_threshold"],
+        match_type=str(rag_config["match_type"]),
     )
 
     parts = assemble_context_parts(
@@ -138,19 +140,26 @@ async def retrieve_agent_knowledge(
     query: str,
     top_k: int,
     score_threshold: float = 0.0,
+    match_type: str = "hybrid",
 ) -> tuple[list[RetrievedChunkOut], list[CitationOut]]:
     chunks: list[RetrievedChunkOut] = []
     citations: list[CitationOut] = []
     for kb_id in kb_ids:
-        result = await retrieve_chunks(db, tenant_id=tenant_id, kb_id=kb_id, query=query, top_k=top_k)
+        result = await retrieve_chunks(
+            db,
+            tenant_id=tenant_id,
+            kb_id=kb_id,
+            query=query,
+            top_k=top_k,
+            match_type=match_type if match_type in {"hybrid", "vector", "keyword"} else "hybrid",
+            score_threshold=score_threshold,
+        )
         if result is None:
             continue
         chunks.extend(result.chunks)
         citations.extend(result.citations)
 
     ranked = sorted(zip(chunks, citations, strict=False), key=lambda pair: pair[0].score, reverse=True)
-    if score_threshold > 0:
-        ranked = [pair for pair in ranked if pair[0].score >= score_threshold]
     ranked = ranked[:top_k]
     return [pair[0] for pair in ranked], [pair[1] for pair in ranked]
 
@@ -179,8 +188,6 @@ def resolve_rag_config(
     match_type = request_match_type if request_match_type is not None else rag.get("match_type")
     if match_type not in {"hybrid", "vector", "keyword"}:
         match_type = "hybrid"
-    # TODO: retrieve_chunks currently performs hybrid recall only. Keep match_type persisted
-    # for the product contract and wire vector/keyword modes when retrieval supports it.
     return {"top_k": top_k, "score_threshold": score_threshold, "match_type": match_type}
 
 
@@ -262,6 +269,7 @@ def assemble_context_parts(
 def make_system_message(agent: Agent, tools: list[Tool]) -> ContextMessageOut:
     config = agent.config or {}
     persona = agent.persona or config.get("persona") or "你是企业智能体中台中的业务助手。"
+    answer_style_enabled = config.get("answer_style_enabled", True) is not False
     lines = [
         persona,
         "",
@@ -270,6 +278,8 @@ def make_system_message(agent: Agent, tools: list[Tool]) -> ContextMessageOut:
         "- 引用知识片段时保留片段编号，最终回答需要能追溯出处。",
         "- 需要调用工具时，只能选择可用工具清单中的工具。",
     ]
+    if answer_style_enabled:
+        lines.extend(["", ANSWER_STYLE_PROMPT])
     if tools:
         lines.extend(["", "可用工具清单："])
         for tool in tools:

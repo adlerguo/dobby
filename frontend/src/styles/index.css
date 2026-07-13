@@ -2,6 +2,7 @@
 @import "./variables.css";
 @import "./typography.css";
 @import "./element-plus.css";
+@import "./markdown.css";
 
 .app-shell {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
@@ -313,6 +314,114 @@
 .one-time-key textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
+}
+
+.visually-hidden-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.kb-docs-drawer {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.document-table {
+  margin-top: var(--space-2);
+}
+
+.document-name {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.document-name strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.document-name span {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-help);
+}
+
+.chunk-panel {
+  display: grid;
+  gap: var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-5);
+}
+
+.chunk-panel__body {
+  display: grid;
+  gap: var(--space-4);
+  min-height: 160px;
+}
+
+.chunk-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.chunk-summary > div {
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-card);
+  padding: var(--space-4);
+}
+
+.chunk-summary span {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-help);
+}
+
+.chunk-summary strong {
+  color: var(--color-text-primary);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.chunk-card {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-card);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-card);
+}
+
+.chunk-card--active {
+  border-color: rgba(91, 92, 226, 0.48);
+  background: rgba(91, 92, 226, 0.04);
+}
+
+.chunk-card__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.chunk-card__meta strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-card-title);
+  font-weight: 600;
+}
+
+.chunk-card__content {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-body);
+  line-height: 1.8;
+  white-space: pre-wrap;
 }
 
 .business-page,

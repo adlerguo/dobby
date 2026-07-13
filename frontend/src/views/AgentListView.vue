@@ -33,6 +33,7 @@ const form = ref({
     score_threshold: 0,
     match_type: 'hybrid',
   } as AgentRagConfig,
+  answer_style_enabled: true,
 })
 const editVisible = ref(false)
 const editingAgent = ref<Agent | null>(null)
@@ -47,6 +48,7 @@ const editForm = ref({
     score_threshold: 0,
     match_type: 'hybrid',
   } as AgentRagConfig,
+  answer_style_enabled: true,
 })
 const activeKbs = computed(() => kbs.value.filter((kb) => kb.status !== 'archived'))
 
@@ -93,6 +95,7 @@ async function createAgent() {
         config: {
           temperature: 0.2,
           rag: normalizeRagConfig(form.value.rag),
+          answer_style_enabled: form.value.answer_style_enabled,
         },
       },
     })
@@ -158,6 +161,7 @@ function openEdit(agent: Agent) {
     persona: agent.persona || '',
     kb_ids: [...(agent.kb_ids || [])],
     rag: ragConfigFromAgent(agent),
+    answer_style_enabled: (agent.config?.answer_style_enabled as boolean | undefined) !== false,
   }
   editVisible.value = true
 }
@@ -178,6 +182,7 @@ async function updateAgent() {
         config: {
           ...existingConfig,
           rag: normalizeRagConfig(editForm.value.rag),
+          answer_style_enabled: editForm.value.answer_style_enabled,
         },
       },
     })
@@ -337,6 +342,14 @@ onMounted(loadData)
           <el-form-item label="人设">
             <el-input v-model="form.persona" type="textarea" :rows="4" />
           </el-form-item>
+          <el-form-item label="结构化回答">
+            <el-switch
+              v-model="form.answer_style_enabled"
+              active-text="开启"
+              inactive-text="关闭"
+            />
+            <div class="field-help">开启后平台会注入统一回答规范：结论先行、表格对比、步骤编号、命令配置用代码块。</div>
+          </el-form-item>
           <el-alert title="当前创建的是草稿配置，完成后会直接进入调试，不影响线上版本。" type="info" :closable="false" />
           </template>
           <template v-if="activeStep === 3">
@@ -397,6 +410,14 @@ onMounted(loadData)
         </el-collapse>
         <el-form-item label="人设">
           <el-input v-model="editForm.persona" type="textarea" :rows="4" />
+        </el-form-item>
+        <el-form-item label="结构化回答">
+          <el-switch
+            v-model="editForm.answer_style_enabled"
+            active-text="开启"
+            inactive-text="关闭"
+          />
+          <div class="field-help">关闭后系统提示词不再追加平台统一回答风格规范。</div>
         </el-form-item>
       </el-form>
       <template #footer>

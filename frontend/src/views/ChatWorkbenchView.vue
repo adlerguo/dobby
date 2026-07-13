@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import MarkdownIt from 'markdown-it'
 
 import { API_BASE, apiFetch } from '../api/client'
 import EmptyState from '../components/common/EmptyState.vue'
@@ -31,6 +32,24 @@ const traceCards = ref<TraceCard[]>([])
 const citationDrawer = ref(false)
 const selectedCitation = ref<Citation | null>(null)
 const streaming = ref(false)
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+})
+
+const defaultTextRenderer = md.renderer.rules.text || ((tokens, idx) => md.utils.escapeHtml(tokens[idx].content))
+md.renderer.rules.text = (tokens, idx, options, env, self) => {
+  const escaped = defaultTextRenderer(tokens, idx, options, env, self)
+  return escaped.replace(/\[(\d{1,3})\]/g, '<span class="citation-inline">[$1]</span>')
+}
+
+md.renderer.rules.fence = (tokens, idx, options) => {
+  const token = tokens[idx]
+  const info = token.info ? md.utils.escapeHtml(token.info.trim().split(/\s+/)[0]) : 'text'
+  const content = md.utils.escapeHtml(token.content)
+  return `<div class="markdown-codeblock"><div class="markdown-codebar"><span>${info}</span><button type="button" class="markdown-copy">复制</button></div><pre><code class="language-${info}">${content}</code></pre></div>`
+}
 
 async function loadOptions() {
   const [agentRows, workspaceRows] = await Promise.all([apiFetch<Agent[]>('/agents'), apiFetch<Workspace[]>('/workspaces')])
@@ -130,6 +149,23 @@ function openCitation(citation: Citation) {
   citationDrawer.value = true
 }
 
+function renderMarkdown(text: string) {
+  return md.render(text || '')
+}
+
+function handleMarkdownClick(event: MouseEvent) {
+  const target = event.target
+  if (!(target instanceof HTMLElement) || !target.classList.contains('markdown-copy')) return
+  const block = target.closest('.markdown-codeblock')
+  const code = block?.querySelector('code')?.textContent || ''
+  if (!code) return
+  window.navigator.clipboard?.writeText(code)
+  target.textContent = '已复制'
+  window.setTimeout(() => {
+    target.textContent = '复制'
+  }, 1200)
+}
+
 function copyCitationSnippet() {
   if (selectedCitation.value?.snippet) {
     window.navigator.clipboard?.writeText(selectedCitation.value.snippet)
@@ -163,7 +199,13 @@ onMounted(loadOptions)
             <EmptyState v-if="messages.length === 0" title="还没有对话" description="选择智能体后即可发送问题，验证回答质量和引用。" />
             <div v-for="(message, index) in messages" :key="index" class="message" :class="{ user: message.role === 'user' }">
               <strong>{{ message.role === 'user' ? '我' : '智能体' }}</strong>
-              <div>{{ message.text || (message.role === 'assistant' && streaming ? '生成中...' : '') }}</div>
+              <div v-if="message.role === 'user'" class="message-text">{{ message.text }}</div>
+              <div
+                v-else
+                class="markdown-body"
+                @click="handleMarkdownClick"
+                v-html="renderMarkdown(message.text || (streaming ? '生成中...' : ''))"
+              />
             </div>
           </div>
           <div class="chat-input">

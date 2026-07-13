@@ -46,6 +46,7 @@ class ChannelProbeIn(BaseModel):
     base_url: str = Field(min_length=1)
     api_key: str = Field(min_length=1)
     protocol: str = Field(default="openai_compatible")
+    request_defaults: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChannelProbeOut(BaseModel):
@@ -77,6 +78,7 @@ class ChatCompletionIn(BaseModel):
 class EmbeddingIn(BaseModel):
     model: str
     input: str | list[str]
+    dimensions: int | None = Field(default=None, ge=1)
 
 
 JsonDict = dict[str, Any]

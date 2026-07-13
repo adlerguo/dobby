@@ -12,7 +12,7 @@ from app.rag.embeddings import embed_texts
 from app.rag.parsers import parse_document_bytes
 
 
-async def ingest_document(db: AsyncSession, document_id: UUID) -> None:
+async def ingest_document(db: AsyncSession, document_id: UUID, *, force: bool = False) -> None:
     result = await db.execute(
         select(Document, KnowledgeBase)
         .join(KnowledgeBase, KnowledgeBase.id == Document.kb_id)
@@ -23,14 +23,13 @@ async def ingest_document(db: AsyncSession, document_id: UUID) -> None:
         return
 
     document, kb = row
-    if document.parse_status not in {"pending", "failed"}:
+    if not force and document.parse_status not in {"pending", "failed"}:
         return
 
     await mark_document(db, document, "parsing", task_status="running")
 
     try:
-        content = await to_thread.run_sync(partial(download_object, document.source_uri))
-        text = parse_document_bytes(content=content, mime=document.mime, filename=document.name)
+        text = await load_document_text(db, document, force=force)
         chunk_size = int((kb.config or {}).get("chunk_size", 800))
         overlap = int((kb.config or {}).get("overlap", 80))
         chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
@@ -43,6 +42,8 @@ async def ingest_document(db: AsyncSession, document_id: UUID) -> None:
         )
         if len(embeddings) != len(chunks):
             raise ValueError("embedding_count_mismatch")
+        if any(len(embedding) != 1536 for embedding in embeddings):
+            raise ValueError("dimension_mismatch")
 
         await db.execute(delete(Chunk).where(Chunk.doc_id == document.id, Chunk.tenant_id == document.tenant_id))
         for chunk, embedding in zip(chunks, embeddings, strict=True):
@@ -78,3 +79,22 @@ async def mark_document(db: AsyncSession, document: Document, parse_status: str,
     document.meta = meta
     document.parse_status = parse_status
     await db.commit()
+
+
+async def load_document_text(db: AsyncSession, document: Document, *, force: bool) -> str:
+    try:
+        content = await to_thread.run_sync(partial(download_object, document.source_uri))
+        return parse_document_bytes(content=content, mime=document.mime, filename=document.name)
+    except Exception:
+        if not force:
+            raise
+
+    result = await db.execute(
+        select(Chunk.content)
+        .where(Chunk.doc_id == document.id, Chunk.tenant_id == document.tenant_id)
+        .order_by(Chunk.seq.asc().nulls_last(), Chunk.created_at.asc())
+    )
+    text = "\n\n".join(row[0] for row in result.all() if row[0])
+    if not text.strip():
+        raise ValueError("source_document_unavailable")
+    return text

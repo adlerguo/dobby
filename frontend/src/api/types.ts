@@ -160,6 +160,37 @@ export interface KnowledgeBase {
   description?: string | null
   embedding_model?: string
   created_at?: string
+  updated_at?: string
+}
+
+export interface KnowledgeDocument {
+  id: string
+  tenant_id: string
+  kb_id: string
+  name: string
+  source_uri?: string | null
+  mime?: string | null
+  size?: number | null
+  parse_status?: 'pending' | 'parsing' | 'done' | 'failed' | string | null
+  meta?: Record<string, unknown>
+  created_at: string
+}
+
+export interface KnowledgeChunk {
+  id: string
+  seq?: number | null
+  content: string
+  content_length: number
+  tokens?: number | null
+  meta: Record<string, unknown>
+  has_embedding: boolean
+  created_at: string
+}
+
+export interface ReindexOut {
+  kb_id: string
+  document_count: number
+  status: string
 }
 
 export interface RetrieveChunk {
@@ -168,11 +199,14 @@ export interface RetrieveChunk {
   doc_id?: string
   doc_name?: string
   document_name?: string
+  seq?: number | null
   content?: string
+  content_length?: number
   snippet?: string
   score?: number | null
   vector_score?: number | null
   text_score?: number | null
+  match_channels?: Array<'vector' | 'keyword' | string>
   meta?: Record<string, unknown>
 }
 

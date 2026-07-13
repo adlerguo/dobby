@@ -14,6 +14,7 @@ from app.models import models
 from app.schemas import ChatCompletionIn, EmbeddingIn, ModelOut
 from app.services import (
     consume_rpm,
+    apply_request_defaults,
     get_cached,
     list_candidate_channels,
     mark_channel_health,
@@ -92,13 +93,7 @@ async def embeddings(
     if not candidates:
         raise HTTPException(status_code=404, detail="model_channel_not_found")
 
-    request_payload = payload.model_dump()
-    cached = await get_cached(redis, "embedding", request_payload)
-    if cached is not None:
-        cached["cache_hit"] = True
-        channel = weighted_choice(candidates)
-        await record_usage(db, channel, cached, latency_ms=0, cache_hit=True)
-        return cached
+    request_payload = payload.model_dump(exclude_none=True)
 
     inputs = payload.input if isinstance(payload.input, list) else [payload.input]
     started = time.perf_counter()
@@ -108,13 +103,19 @@ async def embeddings(
             last_error = "rate_limited"
             continue
         try:
+            effective_payload = apply_request_defaults(request_payload, channel)
+            cached = await get_cached(redis, "embedding", effective_payload)
+            if cached is not None:
+                cached["cache_hit"] = True
+                await record_usage(db, channel, cached, latency_ms=0, cache_hit=True)
+                return cached
             if channel["base_url"].startswith("mock://"):
                 response = mock_embedding_response(payload.model, inputs)
             else:
-                response = await proxy_openai("/v1/embeddings", channel, request_payload)
+                response = await proxy_openai("/v1/embeddings", channel, effective_payload)
             latency_ms = int((time.perf_counter() - started) * 1000)
             await mark_channel_health(db, channel["id"], "ok")
-            await set_cached(redis, "embedding", request_payload, response)
+            await set_cached(redis, "embedding", effective_payload, response)
             await record_usage(db, channel, response, latency_ms=latency_ms, cache_hit=False)
             return response
         except Exception:

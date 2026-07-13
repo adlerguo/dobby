@@ -194,6 +194,17 @@ def mock_embedding_response(model: str, inputs: list[str]) -> dict[str, Any]:
     return {"object": "list", "model": model, "data": data, "usage": {"prompt_tokens": sum(len(i.split()) for i in inputs), "total_tokens": sum(len(i.split()) for i in inputs)}}
 
 
+def apply_request_defaults(payload: dict[str, Any], channel: dict[str, Any]) -> dict[str, Any]:
+    provider_config = channel.get("provider_config") or {}
+    request_defaults = provider_config.get("request_defaults")
+    if not isinstance(request_defaults, dict):
+        return dict(payload)
+    merged = dict(request_defaults)
+    # Explicit request fields win over catalog/channel defaults.
+    merged.update({key: value for key, value in payload.items() if value is not None})
+    return merged
+
+
 async def proxy_openai(path: str, channel: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     api_key = decrypt_secret(channel["api_key_enc"])
     return await proxy_openai_with_key(path, channel, payload, api_key=api_key)
@@ -207,7 +218,7 @@ async def proxy_openai_with_key(
     api_key: str,
 ) -> dict[str, Any]:
     base_url = channel["base_url"].rstrip("/")
-    request_payload = dict(payload)
+    request_payload = apply_request_defaults(payload, channel)
     provider_config = channel.get("provider_config") or {}
     upstream_model = provider_config.get("catalog_code") or provider_config.get("upstream_model")
     if upstream_model:
@@ -235,7 +246,7 @@ async def probe_transient_channel(payload: ChannelProbeIn) -> ChannelProbeOut:
     channel = {
         "base_url": payload.base_url,
         "provider": payload.provider,
-        "provider_config": {"catalog_code": payload.model},
+        "provider_config": {"catalog_code": payload.model, "request_defaults": payload.request_defaults},
     }
     return await probe_channel_request(
         channel,
@@ -281,12 +292,15 @@ async def probe_channel_request(
                 api_key=api_key,
             )
         elif model_type == "embedding":
-            await proxy_openai_with_key(
+            response = await proxy_openai_with_key(
                 "/v1/embeddings",
                 channel,
                 {"model": model, "input": "ping"},
                 api_key=api_key,
             )
+            embedding = ((response.get("data") or [{}])[0].get("embedding") or [])
+            if len(embedding) != 1536:
+                return ChannelProbeOut(ok=False, health="failed", error="dimension_mismatch")
         else:
             return ChannelProbeOut(ok=False, health="failed", error="model_type_not_supported")
         return ChannelProbeOut(ok=True, health="ok")

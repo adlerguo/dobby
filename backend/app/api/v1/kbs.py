@@ -1,14 +1,16 @@
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_current_auth, require_perm
 from app.core.database import get_db
+from app.models import Chunk, Document
 from app.rag.retrieve import retrieve_chunks
-from app.rag.tasks import enqueue_parse_document
+from app.rag.tasks import enqueue_parse_document, enqueue_reindex_document
 from app.repositories import DocumentRepository, KnowledgeBaseRepository
-from app.schemas import DocumentOut, KnowledgeBaseCreate, KnowledgeBaseOut, KnowledgeBaseUpdate, RetrieveIn, RetrieveOut
+from app.schemas import DocumentChunkOut, DocumentOut, KnowledgeBaseCreate, KnowledgeBaseOut, KnowledgeBaseUpdate, ReindexOut, RetrieveIn, RetrieveOut
 from app.services import archive_kb, create_kb, delete_document, update_kb, upload_document
 from app.services.audit_service import write_audit
 
@@ -171,6 +173,72 @@ async def list_kb_documents(
     return list(await repo.list_by_kb(kb_id))
 
 
+@router.post("/kbs/{kb_id}/reindex", response_model=ReindexOut, summary="Reindex knowledge base documents")
+async def reindex_kb_documents(
+    kb_id: UUID,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    auth: AuthContext = Depends(require_perm("kb:create")),
+    db: AsyncSession = Depends(get_db),
+) -> ReindexOut:
+    kb_repo = KnowledgeBaseRepository(db, auth.tenant_id)
+    kb = await kb_repo.get_by_id(kb_id)
+    if kb is None or kb.status == "archived":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+
+    result = await db.execute(
+        select(Document).where(
+            Document.tenant_id == auth.tenant_id,
+            Document.kb_id == kb_id,
+            Document.parse_status == "done",
+        )
+    )
+    documents = list(result.scalars().all())
+    for document in documents:
+        background_tasks.add_task(enqueue_reindex_document, document.id)
+
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="kb.reindex",
+        resource_type="kb",
+        resource_id=kb_id,
+        detail={"document_count": len(documents), "embedding_model": kb.embedding_model},
+        request=request,
+    )
+    return ReindexOut(kb_id=kb_id, document_count=len(documents), status="queued")
+
+
+@router.get("/documents/{document_id}/chunks", response_model=list[DocumentChunkOut], summary="List document chunks")
+async def list_document_chunks(
+    document_id: UUID,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[DocumentChunkOut]:
+    document_result = await db.execute(
+        select(Document.id).where(Document.id == document_id, Document.tenant_id == auth.tenant_id)
+    )
+    if document_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document_not_found")
+
+    result = await db.execute(
+        select(
+            Chunk.id,
+            Chunk.seq,
+            Chunk.content,
+            func.length(Chunk.content).label("content_length"),
+            Chunk.tokens,
+            Chunk.meta,
+            Chunk.embedding.is_not(None).label("has_embedding"),
+            Chunk.created_at,
+        )
+        .where(Chunk.doc_id == document_id, Chunk.tenant_id == auth.tenant_id)
+        .order_by(Chunk.seq.asc().nulls_last(), Chunk.created_at.asc())
+    )
+    return [DocumentChunkOut(**dict(row)) for row in result.mappings().all()]
+
+
 @router.post("/kbs/{kb_id}/retrieve", response_model=RetrieveOut, summary="Retrieve chunks")
 async def retrieve_kb_chunks(
     kb_id: UUID,
@@ -184,6 +252,8 @@ async def retrieve_kb_chunks(
         kb_id=kb_id,
         query=payload.query,
         top_k=payload.top_k,
+        match_type=payload.match_type,
+        score_threshold=payload.score_threshold,
     )
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
