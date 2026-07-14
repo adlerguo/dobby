@@ -3,12 +3,13 @@ from typing import Literal
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Float, bindparam, func, select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Document, KnowledgeBase
 from app.rag.chunk_store import chunk_model_for_dim, normalize_embedding_dim
 from app.rag.embeddings import embed_texts
+from app.rag.text_segmenter import segment_for_search
 from app.schemas import CitationOut, RetrieveOut, RetrievedChunkOut
 
 
@@ -152,29 +153,54 @@ async def text_search(
     embedding_dim: int,
 ) -> list[Candidate]:
     chunk_model = chunk_model_for_dim(embedding_dim)
-    ts_query = func.plainto_tsquery("simple", query)
-    ts_vector = func.to_tsvector("simple", chunk_model.content)
-    score = func.ts_rank_cd(ts_vector, ts_query).cast(Float)
-    stmt = (
-        select(
-            chunk_model.id,
-            chunk_model.doc_id,
-            Document.name.label("doc_name"),
-            chunk_model.seq,
-            chunk_model.content,
-            chunk_model.meta,
-            score.label("score"),
+    query_tokens = segment_for_search(query)
+    if not query_tokens:
+        return []
+
+    rows = await load_text_search_rows(db, tenant_id, kb_id, embedding_dim)
+    segmented_rows = [(row["id"], segment_for_search(row["content"] or "")) for row in rows]
+    segmented_rows = [(chunk_id, content) for chunk_id, content in segmented_rows if content]
+    if not segmented_rows:
+        return []
+
+    chunk_ids = [chunk_id for chunk_id, _ in segmented_rows]
+    segmented_contents = [content for _, content in segmented_rows]
+    table_name = chunk_model.__tablename__
+    stmt = text(
+        f"""
+        WITH segmented(id, content) AS (
+            SELECT * FROM unnest(CAST(:chunk_ids AS uuid[]), CAST(:segmented_contents AS text[]))
         )
-        .join(Document, Document.id == chunk_model.doc_id)
-        .where(
-            chunk_model.tenant_id == tenant_id,
-            chunk_model.kb_id == kb_id,
-            text(f"to_tsvector('simple', {chunk_model.__tablename__}.content) @@ plainto_tsquery('simple', :query)"),
-        )
-        .order_by(score.desc())
-        .limit(limit)
+        SELECT
+            c.id,
+            c.doc_id,
+            d.name AS doc_name,
+            c.seq,
+            c.content,
+            c.meta,
+            ts_rank_cd(to_tsvector('simple', segmented.content), plainto_tsquery('simple', :query))::float AS score
+        FROM {table_name} c
+        JOIN segmented ON segmented.id = c.id
+        JOIN documents d ON d.id = c.doc_id
+        WHERE
+            c.tenant_id = :tenant_id
+            AND c.kb_id = :kb_id
+            AND to_tsvector('simple', segmented.content) @@ plainto_tsquery('simple', :query)
+        ORDER BY score DESC
+        LIMIT :limit
+        """
     )
-    result = await db.execute(stmt, {"query": query})
+    result = await db.execute(
+        stmt,
+        {
+            "tenant_id": tenant_id,
+            "kb_id": kb_id,
+            "query": query_tokens,
+            "limit": limit,
+            "chunk_ids": chunk_ids,
+            "segmented_contents": segmented_contents,
+        },
+    )
     candidates: list[Candidate] = []
     for rank, row in enumerate(result.mappings().all(), start=1):
         candidates.append(
@@ -190,6 +216,17 @@ async def text_search(
             )
         )
     return candidates
+
+
+async def load_text_search_rows(db: AsyncSession, tenant_id: UUID, kb_id: UUID, embedding_dim: int) -> list[dict]:
+    chunk_model = chunk_model_for_dim(embedding_dim)
+    stmt = (
+        select(chunk_model.id, chunk_model.content)
+        .where(chunk_model.tenant_id == tenant_id, chunk_model.kb_id == kb_id)
+        .order_by(chunk_model.seq.asc())
+    )
+    result = await db.execute(stmt)
+    return list(result.mappings().all())
 
 
 def merge_candidates(vector_candidates: list[Candidate], text_candidates: list[Candidate], top_k: int) -> list[Candidate]:
