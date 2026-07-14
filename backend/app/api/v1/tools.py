@@ -126,4 +126,6 @@ async def run_tool_api(
     result = await run_tool(db, tenant_id=auth.tenant_id, tool_id=tool_id, input=payload.input)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found")
+    if result.output.get("error") == "forbidden":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=result.output)
     return result

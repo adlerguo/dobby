@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.tool_policy import is_code_tool, is_code_tool_allowed
 from app.models import Tool
 from app.repositories import ToolRepository
 from app.schemas import ToolCreate, ToolRunOut, ToolUpdate
@@ -86,6 +87,14 @@ async def run_tool(db: AsyncSession, *, tenant_id: UUID, tool_id: UUID, input: d
     tool = await repo.get_by_id(tool_id)
     if tool is None or tool.status != "active":
         return None
+
+    if is_code_tool(tool) and not is_code_tool_allowed(tool):
+        return ToolRunOut(
+            tool_id=tool.id,
+            type=tool.type,
+            status="failed",
+            output={"error": "forbidden", "detail": "代码类工具默认关闭，请在后端开启白名单后再执行。"},
+        )
 
     if tool.type == "http":
         output = await run_http_tool(tool, input)
