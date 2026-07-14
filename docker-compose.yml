@@ -58,6 +58,8 @@ services:
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-3600}
       ENABLE_AUTO_CODE_TOOLS: ${ENABLE_AUTO_CODE_TOOLS:-false}
       CODE_TOOL_ALLOWLIST: ${CODE_TOOL_ALLOWLIST:-}
+      # Trusted external hosts for HTTP tools; keep empty unless a domain is explicitly approved.
+      HTTP_TOOL_ALLOWED_HOSTS: ${HTTP_TOOL_ALLOWED_HOSTS:-}
     volumes:
       - app_secrets:/data/secrets
     ports:

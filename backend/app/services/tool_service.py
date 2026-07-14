@@ -1,11 +1,14 @@
 import ast
 import csv
+import ipaddress
 import io
 import operator
 from pathlib import Path
 import re
 import sqlite3
+import socket
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -120,10 +123,13 @@ async def run_http_tool(tool: Tool, input: dict[str, Any]) -> dict[str, Any]:
     params = input.get("params") or config.get("params")
     json_body = input.get("json", config.get("json"))
     timeout = float(config.get("timeout_seconds") or input.get("timeout_seconds") or 10)
+    ssrf_error = validate_http_tool_url(str(url))
+    if ssrf_error is not None:
+        return ssrf_error
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.request(method, url, headers=headers, params=params, json=json_body)
+            response = await client.request(method, url, headers=headers, params=params, json=json_body, follow_redirects=False)
         text = response.text
         return {
             "status_code": response.status_code,
@@ -132,6 +138,71 @@ async def run_http_tool(tool: Tool, input: dict[str, Any]) -> dict[str, Any]:
         }
     except httpx.HTTPError as exc:
         return {"error": "http_tool_failed", "detail": str(exc)}
+
+
+INTERNAL_HOSTNAMES = {
+    "backend",
+    "frontend",
+    "localhost",
+    "maas",
+    "minio",
+    "postgres",
+    "redis",
+    "sandbox",
+}
+
+
+def validate_http_tool_url(url: str) -> dict[str, str] | None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return {"error": "ssrf_blocked", "detail": "Only absolute http(s) URLs are allowed."}
+    try:
+        port = parsed.port
+    except ValueError:
+        return {"error": "ssrf_blocked", "detail": "Invalid URL port."}
+
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname in allowed_http_tool_hosts():
+        return None
+    if hostname in INTERNAL_HOSTNAMES or hostname.endswith(".local"):
+        return {"error": "ssrf_blocked", "detail": "Internal service hostnames are not allowed."}
+
+    blocked_literal = blocked_ip_literal(hostname)
+    if blocked_literal is not None:
+        return {"error": "ssrf_blocked", "detail": f"Blocked private or local address: {blocked_literal}."}
+
+    try:
+        addresses = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return {"error": "ssrf_blocked", "detail": "Hostname could not be resolved safely."}
+
+    for address in {item[4][0] for item in addresses}:
+        if is_blocked_ip(address):
+            return {"error": "ssrf_blocked", "detail": f"Blocked private or local address: {address}."}
+    return None
+
+
+def allowed_http_tool_hosts() -> set[str]:
+    return {host.strip().lower().rstrip(".") for host in settings.http_tool_allowed_hosts.split(",") if host.strip()}
+
+
+def blocked_ip_literal(hostname: str) -> str | None:
+    try:
+        return hostname if is_blocked_ip(hostname) else None
+    except ValueError:
+        return None
+
+
+def is_blocked_ip(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    return (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_reserved
+    )
 
 
 async def run_code_tool(tool: Tool, input: dict[str, Any]) -> dict[str, Any]:
