@@ -1,4 +1,9 @@
-from fastapi import FastAPI
+import logging
+from collections.abc import Iterable
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.api.v1.agents import router as agents_router
 from app.api.v1.audit import router as audit_router
@@ -21,6 +26,14 @@ from app.api.v1.workspaces import router as workspaces_router
 from app.core.config import settings
 from app.core.middleware import BodySizeLimitMiddleware
 
+try:
+    import psycopg
+except ImportError:  # pragma: no cover - psycopg is installed in the service image.
+    psycopg = None
+
+
+logger = logging.getLogger(__name__)
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -28,6 +41,43 @@ app = FastAPI(
     openapi_url="/api/v1/openapi.json",
 )
 app.add_middleware(BodySizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
+
+
+async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+    lines = str(exc).splitlines()
+    first_line = lines[0] if lines else repr(exc)
+    logger.error(
+        "database_unavailable %s: %s path=%s",
+        exc.__class__.__name__,
+        first_line,
+        request.url.path,
+    )
+    logger.debug("database_unavailable traceback", exc_info=(type(exc), exc, exc.__traceback__))
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "code": "database_unavailable",
+                "message": "Database is temporarily unavailable.",
+            }
+        },
+    )
+
+
+def database_exception_classes() -> Iterable[type[Exception]]:
+    yield OperationalError
+    yield InterfaceError
+    if psycopg is not None:
+        yield psycopg.OperationalError
+        yield psycopg.InterfaceError
+        connection_exception = getattr(psycopg.errors, "ConnectionException", None)
+        if connection_exception is not None:
+            yield connection_exception
+
+
+for exception_class in database_exception_classes():
+    app.add_exception_handler(exception_class, database_unavailable_handler)
+
 
 app.include_router(health_router)
 app.include_router(health_router, prefix="/api/v1")
