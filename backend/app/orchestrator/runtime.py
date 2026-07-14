@@ -255,13 +255,11 @@ async def stream_agent_events(
     db.add(root_trace)
     await db.flush()
 
-    for citation in context.citations:
-        yield {"event": "citation", "data": citation.model_dump(mode="json")}
-
     started = time.perf_counter()
     messages = [{"role": message.role, "content": message.content} for message in context.messages]
     answer_parts: list[str] = []
     usage: dict[str, Any] = {}
+    citations_sent = False
     try:
         async for event in call_maas_chat_stream(
             db,
@@ -274,6 +272,10 @@ async def stream_agent_events(
             messages,
         ):
             if event["type"] == "delta":
+                if not citations_sent:
+                    for citation in context.citations:
+                        yield {"event": "citation", "data": citation.model_dump(mode="json")}
+                    citations_sent = True
                 text = event["text"]
                 answer_parts.append(text)
                 yield {"event": "delta", "data": {"text": text}}
@@ -287,6 +289,11 @@ async def stream_agent_events(
         await db.commit()
         yield {"event": "error", "data": {"detail": str(exc)}}
         return
+
+    if not citations_sent:
+        for citation in context.citations:
+            yield {"event": "citation", "data": citation.model_dump(mode="json")}
+        citations_sent = True
 
     answer = "".join(answer_parts)
     tool_results = await run_tool_loop(

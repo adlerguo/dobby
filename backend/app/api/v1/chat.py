@@ -21,8 +21,18 @@ async def chat_stream(
     payload: ChatIn,
     auth: AuthContext = Depends(get_current_auth),
 ) -> StreamingResponse:
+    events = stream_chat_events(auth=auth, payload=payload)
+    first_event = await anext(events, None)
+    if first_event is None:
+        return StreamingResponse(iter(()), media_type="text/event-stream")
+
+    error_detail = sse_error_detail(first_event)
+    if error_detail in PRE_STREAM_ERROR_STATUS:
+        await events.aclose()
+        raise HTTPException(status_code=PRE_STREAM_ERROR_STATUS[error_detail], detail=error_detail)
+
     return StreamingResponse(
-        stream_chat_events(auth=auth, payload=payload),
+        prepend_event(first_event, events),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -127,3 +137,34 @@ async def load_conversation(db: AsyncSession, *, tenant_id: UUID, conversation_i
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+
+PRE_STREAM_ERROR_STATUS = {
+    "agent_not_found": status.HTTP_404_NOT_FOUND,
+    "conversation_not_found": status.HTTP_404_NOT_FOUND,
+    "workspace_not_found": status.HTTP_404_NOT_FOUND,
+    "agent_not_in_workspace": status.HTTP_403_FORBIDDEN,
+    "workspace_mismatch": status.HTTP_409_CONFLICT,
+    "model_not_found": status.HTTP_409_CONFLICT,
+    "no_active_model_channel": status.HTTP_409_CONFLICT,
+}
+
+
+async def prepend_event(first_event: str, events: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+    yield first_event
+    async for event in events:
+        yield event
+
+
+def sse_error_detail(frame: str) -> str | None:
+    lines = frame.splitlines()
+    if "event: error" not in lines:
+        return None
+    data = next((line.removeprefix("data:").strip() for line in lines if line.startswith("data:")), None)
+    if data is None:
+        return None
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    detail = payload.get("detail")
+    return detail if isinstance(detail, str) else None
