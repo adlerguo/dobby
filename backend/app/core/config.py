@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     jwt_refresh_ttl: int = Field(default=604800)
     enable_auto_code_tools: bool = Field(default=False)
     code_tool_allowlist: str = Field(default="")
+    max_request_body_bytes: int = Field(default=2_097_152)
 
 
 settings = Settings()

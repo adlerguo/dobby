@@ -19,6 +19,7 @@ from app.api.v1.tools import router as tools_router
 from app.api.v1.users import router as users_router
 from app.api.v1.workspaces import router as workspaces_router
 from app.core.config import settings
+from app.core.middleware import BodySizeLimitMiddleware
 
 
 app = FastAPI(
@@ -26,6 +27,7 @@ app = FastAPI(
     version=settings.app_version,
     openapi_url="/api/v1/openapi.json",
 )
+app.add_middleware(BodySizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
 
 app.include_router(health_router)
 app.include_router(health_router, prefix="/api/v1")

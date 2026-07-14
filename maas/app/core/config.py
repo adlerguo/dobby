@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://redis:6379/0")
     maas_encryption_key: str | None = Field(default=None)
     maas_cache_ttl: int = Field(default=300)
+    max_request_body_bytes: int = Field(default=2_097_152)
     production_mode: bool = Field(default=True)
 
 
