@@ -123,7 +123,9 @@ async def stream_chat_events(auth: AuthContext, payload: ChatIn) -> AsyncGenerat
             ):
                 yield sse_event(event["event"], event["data"])
         except ValueError as exc:
-            yield sse_event("error", {"detail": str(exc)})
+            code = getattr(exc, "code", str(exc))
+            detail = getattr(exc, "detail", str(exc))
+            yield sse_event("error", {"code": code, "detail": detail})
             return
 
 
@@ -166,5 +168,8 @@ def sse_error_detail(frame: str) -> str | None:
         payload = json.loads(data)
     except json.JSONDecodeError:
         return None
+    code = payload.get("code")
+    if isinstance(code, str):
+        return code
     detail = payload.get("detail")
     return detail if isinstance(detail, str) else None

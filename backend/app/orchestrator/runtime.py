@@ -1,6 +1,7 @@
 import json
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -15,6 +16,22 @@ from app.repositories import AgentRepository, ToolRepository
 from app.schemas import AgentRunIn, AgentRunOut, ContextBuildOut, RuntimeToolCallIn, RuntimeToolCallOut
 from app.services import run_tool
 from app.services.workspace_service import get_workspace_resource_ids, load_workspace
+
+
+@dataclass
+class OrchestratorError(ValueError):
+    code: str
+    message: str | None = None
+
+    def __str__(self) -> str:
+        return self.code
+
+    @property
+    def detail(self) -> str:
+        return self.message or self.code
+
+    def event_data(self) -> dict[str, str]:
+        return {"code": self.code, "detail": self.detail}
 
 
 async def dispatch_single_agent(
@@ -104,30 +121,9 @@ async def run_agent(
     await db.flush()
 
     started = time.perf_counter()
-    messages = [{"role": message.role, "content": message.content} for message in context.messages]
-    first_response = await call_maas_chat(db, tenant_id, conversation.id, agent.id, root_trace.id, model.name, agent, messages)
-    first_answer = extract_answer(first_response)
-    requested_tool_calls = payload.tool_calls or auto_tool_calls(agent, context, payload.query)
-
-    tool_results = await run_tool_loop(
-        db,
-        tenant_id=tenant_id,
-        conversation_id=conversation.id,
-        agent=agent,
-        parent_trace_id=root_trace.id,
-        context=context,
-        assistant_text=first_answer,
-        requested_tool_calls=requested_tool_calls,
-        max_tool_rounds=payload.max_tool_rounds,
-    )
-
-    final_response = first_response
-    answer = first_answer
-    tool_failed = any(result.status == "failed" for result in tool_results)
-    if tool_results and not tool_failed:
-        messages.append({"role": "assistant", "content": first_answer})
-        messages.append({"role": "user", "content": tool_result_prompt(tool_results)})
-        final_response = await call_maas_chat(
+    try:
+        messages = [{"role": message.role, "content": message.content} for message in context.messages]
+        first_response = await call_maas_chat(
             db,
             tenant_id,
             conversation.id,
@@ -136,50 +132,85 @@ async def run_agent(
             model.name,
             agent,
             messages,
-            name="maas_final",
         )
-        answer = extract_answer(final_response)
-        if agent.type == "nl2data":
-            answer = format_nl2data_answer(tool_results)
-    elif tool_failed:
-        answer = format_tool_failure_answer(tool_results)
+        first_answer = extract_answer(first_response)
+        requested_tool_calls = payload.tool_calls or auto_tool_calls(agent, context, payload.query)
 
-    usage = final_response.get("usage") or {}
-    assistant_message = Message(
-        tenant_id=tenant_id,
-        conversation_id=conversation.id,
-        role="assistant",
-        content=answer,
-        tokens=estimate_tokens(answer),
-        citations=[citation.model_dump(mode="json") for citation in context.citations],
-    )
-    db.add(assistant_message)
-    root_trace.status = "failed" if tool_failed else "ok"
-    root_trace.output = {
-        "answer": answer,
-        "usage": usage,
-        "tool_results": [result.model_dump(mode="json") for result in tool_results],
-        "citations": [citation.model_dump(mode="json") for citation in context.citations],
-    }
-    root_trace.tokens = int((usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
-    root_trace.latency_ms = int((time.perf_counter() - started) * 1000)
-    await db.flush()
-    await db.commit()
-    await db.refresh(user_message)
-    await db.refresh(assistant_message)
-    await db.refresh(root_trace)
+        tool_results = await run_tool_loop(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conversation.id,
+            agent=agent,
+            parent_trace_id=root_trace.id,
+            context=context,
+            assistant_text=first_answer,
+            requested_tool_calls=requested_tool_calls,
+            max_tool_rounds=payload.max_tool_rounds,
+        )
 
-    return AgentRunOut(
-        conversation_id=conversation.id,
-        user_message_id=user_message.id,
-        assistant_message_id=assistant_message.id,
-        trace_id=root_trace.id,
-        answer=answer,
-        citations=context.citations,
-        tool_results=tool_results,
-        usage=usage,
-        context=context,
-    )
+        final_response = first_response
+        answer = first_answer
+        tool_failed = any(result.status == "failed" for result in tool_results)
+        if tool_results and not tool_failed:
+            messages.append({"role": "assistant", "content": first_answer})
+            messages.append({"role": "user", "content": tool_result_prompt(tool_results)})
+            final_response = await call_maas_chat(
+                db,
+                tenant_id,
+                conversation.id,
+                agent.id,
+                root_trace.id,
+                model.name,
+                agent,
+                messages,
+                name="maas_final",
+            )
+            answer = extract_answer(final_response)
+            if agent.type == "nl2data":
+                answer = format_nl2data_answer(tool_results)
+        elif tool_failed:
+            answer = format_tool_failure_answer(tool_results)
+
+        usage = final_response.get("usage") or {}
+        assistant_message = Message(
+            tenant_id=tenant_id,
+            conversation_id=conversation.id,
+            role="assistant",
+            content=answer,
+            tokens=estimate_tokens(answer),
+            citations=[citation.model_dump(mode="json") for citation in context.citations],
+        )
+        db.add(assistant_message)
+        root_trace.status = "failed" if tool_failed else "ok"
+        root_trace.output = {
+            "answer": answer,
+            "usage": usage,
+            "tool_results": [result.model_dump(mode="json") for result in tool_results],
+            "citations": [citation.model_dump(mode="json") for citation in context.citations],
+        }
+        root_trace.tokens = int((usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
+        root_trace.latency_ms = int((time.perf_counter() - started) * 1000)
+        await db.flush()
+        await db.commit()
+        await db.refresh(user_message)
+        await db.refresh(assistant_message)
+        await db.refresh(root_trace)
+
+        return AgentRunOut(
+            conversation_id=conversation.id,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            trace_id=root_trace.id,
+            answer=answer,
+            citations=context.citations,
+            tool_results=tool_results,
+            usage=usage,
+            context=context,
+        )
+    except Exception as exc:
+        error = runtime_error(exc)
+        await commit_failed_root_trace(db, root_trace=root_trace, started=started, error=error)
+        raise error from exc
 
 
 async def stream_agent_events(
@@ -193,7 +224,7 @@ async def stream_agent_events(
     repo = AgentRepository(db, tenant_id)
     agent = await repo.get_by_id(agent_id)
     if agent is None or agent.status != "active":
-        yield {"event": "error", "data": {"detail": "agent_not_found"}}
+        yield {"event": "error", "data": OrchestratorError("agent_not_found").event_data()}
         return
 
     conversation = await ensure_conversation(
@@ -220,7 +251,7 @@ async def stream_agent_events(
         match_type=payload.match_type,
     )
     if context is None:
-        yield {"event": "error", "data": {"detail": "agent_not_found"}}
+        yield {"event": "error", "data": OrchestratorError("agent_not_found").event_data()}
         return
 
     user_message = Message(
@@ -285,13 +316,10 @@ async def stream_agent_events(
                 yield {"event": "delta", "data": {"text": text}}
             elif event["type"] == "usage":
                 usage = event["usage"]
-    except ValueError as exc:
-        root_trace.status = "failed"
-        root_trace.output = {"error": str(exc)}
-        root_trace.latency_ms = int((time.perf_counter() - started) * 1000)
-        await db.flush()
-        await db.commit()
-        yield {"event": "error", "data": {"detail": str(exc)}}
+    except Exception as exc:
+        error = runtime_error(exc)
+        await commit_failed_root_trace(db, root_trace=root_trace, started=started, error=error, usage=usage)
+        yield {"event": "error", "data": error.event_data()}
         yield {
             "event": "done",
             "data": {
@@ -310,39 +338,94 @@ async def stream_agent_events(
             yield {"event": "citation", "data": citation.model_dump(mode="json")}
         citations_sent = True
 
-    answer = "".join(answer_parts)
-    tool_results = await run_tool_loop(
-        db,
-        tenant_id=tenant_id,
-        conversation_id=conversation.id,
-        agent=agent,
-        parent_trace_id=root_trace.id,
-        context=context,
-        assistant_text=answer,
-        requested_tool_calls=payload.tool_calls or auto_tool_calls(agent, context, payload.query),
-        max_tool_rounds=payload.max_tool_rounds,
-    )
-    tool_failed = any(result.status == "failed" for result in tool_results)
-    if tool_results and not tool_failed:
-        final_messages = [*messages, {"role": "assistant", "content": answer}, {"role": "user", "content": tool_result_prompt(tool_results)}]
-        final_response = await call_maas_chat(
+    tool_results: list[RuntimeToolCallOut] = []
+    try:
+        answer = "".join(answer_parts)
+        tool_results = await run_tool_loop(
             db,
-            tenant_id,
-            conversation.id,
-            agent.id,
-            root_trace.id,
-            model.name,
-            agent,
-            final_messages,
-            name="maas_final",
+            tenant_id=tenant_id,
+            conversation_id=conversation.id,
+            agent=agent,
+            parent_trace_id=root_trace.id,
+            context=context,
+            assistant_text=answer,
+            requested_tool_calls=payload.tool_calls or auto_tool_calls(agent, context, payload.query),
+            max_tool_rounds=payload.max_tool_rounds,
         )
-        answer = extract_answer(final_response)
-        usage = final_response.get("usage") or usage
-        yield {"event": "delta", "data": {"text": "\n\n" + answer}}
-    elif tool_failed:
-        tool_error_answer = format_tool_failure_answer(tool_results)
-        answer = answer + "\n\n" + tool_error_answer if answer else tool_error_answer
-        yield {"event": "delta", "data": {"text": "\n\n" + tool_error_answer}}
+        execution_error = tool_exception_error(tool_results)
+        if execution_error is not None:
+            await commit_failed_root_trace(
+                db,
+                root_trace=root_trace,
+                started=started,
+                error=execution_error,
+                usage=usage,
+                tool_results=tool_results,
+                citations=context.citations,
+            )
+            yield {"event": "error", "data": execution_error.event_data()}
+            yield {
+                "event": "done",
+                "data": {
+                    "conversation_id": str(conversation.id),
+                    "trace_id": str(root_trace.id),
+                    "usage": usage,
+                    "tool_results": [tool.model_dump(mode="json") for tool in tool_results],
+                    "citation_count": len(context.citations),
+                    "status": "failed",
+                },
+            }
+            return
+
+        tool_failed = any(result.status == "failed" for result in tool_results)
+        if tool_results and not tool_failed:
+            final_messages = [
+                *messages,
+                {"role": "assistant", "content": answer},
+                {"role": "user", "content": tool_result_prompt(tool_results)},
+            ]
+            final_response = await call_maas_chat(
+                db,
+                tenant_id,
+                conversation.id,
+                agent.id,
+                root_trace.id,
+                model.name,
+                agent,
+                final_messages,
+                name="maas_final",
+            )
+            answer = extract_answer(final_response)
+            usage = final_response.get("usage") or usage
+            yield {"event": "delta", "data": {"text": "\n\n" + answer}}
+        elif tool_failed:
+            tool_error_answer = format_tool_failure_answer(tool_results)
+            answer = answer + "\n\n" + tool_error_answer if answer else tool_error_answer
+            yield {"event": "delta", "data": {"text": "\n\n" + tool_error_answer}}
+    except Exception as exc:
+        error = runtime_error(exc)
+        await commit_failed_root_trace(
+            db,
+            root_trace=root_trace,
+            started=started,
+            error=error,
+            usage=usage,
+            tool_results=tool_results,
+            citations=context.citations,
+        )
+        yield {"event": "error", "data": error.event_data()}
+        yield {
+            "event": "done",
+            "data": {
+                "conversation_id": str(conversation.id),
+                "trace_id": str(root_trace.id),
+                "usage": usage,
+                "tool_results": [tool.model_dump(mode="json") for tool in tool_results],
+                "citation_count": len(context.citations),
+                "status": "failed",
+            },
+        }
+        return
 
     assistant_message = Message(
         tenant_id=tenant_id,
@@ -496,12 +579,12 @@ async def call_maas_chat(
         await db.flush()
         return data
     except httpx.HTTPError as exc:
-        detail = maas_error_detail(exc)
+        error = runtime_error(exc)
         trace.status = "failed"
-        trace.output = {"error": detail, "detail": str(exc)}
+        trace.output = {"error": error.code, "detail": error.detail}
         trace.latency_ms = int((time.perf_counter() - started) * 1000)
         await db.flush()
-        raise ValueError(detail) from exc
+        raise error from exc
 
 
 async def call_maas_chat_stream(
@@ -553,7 +636,7 @@ async def call_maas_chat_stream(
             ) as response:
                 if response.status_code >= 400:
                     body = await response.aread()
-                    raise ValueError(maas_stream_error_detail(body))
+                    raise OrchestratorError(maas_stream_error_detail(body))
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -566,7 +649,7 @@ async def call_maas_chat_stream(
                         continue
                     if payload.get("error"):
                         error = payload["error"]
-                        raise ValueError(error.get("message") or "maas_stream_failed")
+                        raise OrchestratorError(error.get("code") or "maas_stream_failed", error.get("message"))
                     if payload.get("usage"):
                         usage = payload["usage"]
                         yield {"type": "usage", "usage": usage}
@@ -582,18 +665,19 @@ async def call_maas_chat_stream(
         trace.latency_ms = int((time.perf_counter() - started) * 1000)
         await db.flush()
     except ValueError as exc:
+        error = runtime_error(exc)
         trace.status = "failed"
-        trace.output = {"error": str(exc)}
+        trace.output = {"error": error.code}
         trace.latency_ms = int((time.perf_counter() - started) * 1000)
         await db.flush()
-        raise
+        raise error from exc
     except httpx.HTTPError as exc:
-        detail = maas_error_detail(exc)
+        error = runtime_error(exc)
         trace.status = "failed"
-        trace.output = {"error": detail, "detail": str(exc)}
+        trace.output = {"error": error.code, "detail": error.detail}
         trace.latency_ms = int((time.perf_counter() - started) * 1000)
         await db.flush()
-        raise ValueError(detail) from exc
+        raise error from exc
 
 
 def maas_stream_error_detail(body: bytes) -> str:
@@ -619,6 +703,64 @@ def maas_error_detail(exc: httpx.HTTPError) -> str:
         if isinstance(detail, str) and detail:
             return detail
     return "maas_call_failed"
+
+
+def runtime_error(exc: Exception) -> OrchestratorError:
+    if isinstance(exc, OrchestratorError):
+        return exc
+    if isinstance(exc, httpx.HTTPError):
+        return OrchestratorError(maas_error_detail(exc), str(exc))
+    if is_dependency_exception(exc):
+        return OrchestratorError("dependency_unavailable", str(exc))
+    if isinstance(exc, ValueError):
+        return OrchestratorError(str(exc))
+    return OrchestratorError("agent_execution_failed", str(exc))
+
+
+def is_dependency_exception(exc: Exception) -> bool:
+    module = exc.__class__.__module__.split(".", maxsplit=1)[0]
+    if module in {"redis", "minio"}:
+        return True
+    return isinstance(exc, (ConnectionError, TimeoutError))
+
+
+async def commit_failed_root_trace(
+    db: AsyncSession,
+    *,
+    root_trace: RunTrace,
+    started: float,
+    error: OrchestratorError,
+    usage: dict[str, Any] | None = None,
+    tool_results: list[RuntimeToolCallOut] | None = None,
+    citations: list[Any] | None = None,
+) -> None:
+    root_trace.status = "failed"
+    root_trace.output = {"error": error.code}
+    if tool_results is not None:
+        root_trace.output["tool_results"] = [result.model_dump(mode="json") for result in tool_results]
+    if citations is not None:
+        root_trace.output["citations"] = [
+            citation.model_dump(mode="json") if hasattr(citation, "model_dump") else citation for citation in citations
+        ]
+    if usage:
+        root_trace.output["usage"] = usage
+    root_trace.latency_ms = int((time.perf_counter() - started) * 1000)
+    await db.flush()
+    await db.commit()
+
+
+def tool_exception_error(tool_results: list[RuntimeToolCallOut]) -> OrchestratorError | None:
+    failed = next(
+        (
+            result
+            for result in tool_results
+            if result.status == "failed" and result.output.get("error") == "tool_execution_failed"
+        ),
+        None,
+    )
+    if failed is None:
+        return None
+    return OrchestratorError("tool_execution_failed", failed.output.get("detail") or "tool_execution_failed")
 
 
 def upstream_timeout() -> httpx.Timeout:
@@ -687,65 +829,79 @@ async def run_tool_loop(
             )
             continue
 
-        trace = RunTrace(
-            tenant_id=tenant_id,
-            conversation_id=conversation_id,
-            agent_id=agent.id,
-            parent_id=parent_trace_id,
-            span_type="tool",
-            name=tool.name,
-            status="running",
-            input={"tool_id": str(tool.id), "input": call.input},
-            output={},
-        )
-        db.add(trace)
-        await db.flush()
-        started = time.perf_counter()
-        try:
-            output = await run_tool(db, tenant_id=tenant_id, tool_id=tool.id, input=call.input)
-        except Exception as exc:
-            failed = RuntimeToolCallOut(
-                tool_id=tool.id,
-                tool_name=tool.name,
-                input=call.input,
-                output={"error": "tool_execution_failed", "detail": str(exc)},
-                status="failed",
+        results.append(
+            await execute_bound_tool_call(
+                db,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                agent=agent,
+                parent_trace_id=parent_trace_id,
+                tool=tool,
+                call=call,
             )
-            trace.status = "failed"
-            trace.output = failed.model_dump(mode="json")
-            trace.latency_ms = int((time.perf_counter() - started) * 1000)
-            await db.flush()
-            results.append(failed)
-            continue
+        )
+    return results
+
+
+async def execute_bound_tool_call(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    agent: Agent,
+    parent_trace_id: UUID,
+    tool: Tool,
+    call: RuntimeToolCallIn,
+) -> RuntimeToolCallOut:
+    trace = RunTrace(
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        agent_id=agent.id,
+        parent_id=parent_trace_id,
+        span_type="tool",
+        name=tool.name,
+        status="running",
+        input={"tool_id": str(tool.id), "input": call.input},
+        output={},
+    )
+    db.add(trace)
+    await db.flush()
+    started = time.perf_counter()
+    try:
+        output = await run_tool(db, tenant_id=tenant_id, tool_id=tool.id, input=call.input)
+    except Exception as exc:
+        result = RuntimeToolCallOut(
+            tool_id=tool.id,
+            tool_name=tool.name,
+            input=call.input,
+            output={"error": "tool_execution_failed", "detail": str(exc)},
+            status="failed",
+        )
+    else:
         if output is None:
-            output_result = RuntimeToolCallOut(
+            result = RuntimeToolCallOut(
                 tool_id=tool.id,
                 tool_name=tool.name,
                 input=call.input,
                 output={"error": "tool_not_found"},
                 status="failed",
             )
-            trace.status = "failed"
-            trace.output = output_result.model_dump(mode="json")
-            trace.latency_ms = int((time.perf_counter() - started) * 1000)
-            await db.flush()
-            results.append(output_result)
-            continue
-
-        trace.status = output.status
-        trace.output = output.model_dump(mode="json")
-        trace.latency_ms = int((time.perf_counter() - started) * 1000)
-        await db.flush()
-        results.append(
-            RuntimeToolCallOut(
+        else:
+            result = RuntimeToolCallOut(
                 tool_id=tool.id,
                 tool_name=tool.name,
                 input=call.input,
                 output=output.output,
                 status=output.status,
             )
-        )
-    return results
+            trace.output = output.model_dump(mode="json")
+
+    trace.status = result.status
+    if not trace.output:
+        trace.output = result.model_dump(mode="json")
+    trace.latency_ms = int((time.perf_counter() - started) * 1000)
+    await db.flush()
+    return result
 
 
 def parse_tool_calls(text: str) -> list[RuntimeToolCallIn]:

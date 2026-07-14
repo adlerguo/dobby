@@ -27,6 +27,20 @@ router = APIRouter(tags=["agents"])
 
 def agent_error(exc: ValueError) -> HTTPException:
     detail = str(exc)
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        body = {"error": {"code": code, "message": getattr(exc, "detail", code)}}
+        if code in {"maas_timeout"}:
+            return HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=body)
+        if code in {"dependency_unavailable"}:
+            return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=body)
+        if code in {"maas_call_failed", "maas_stream_failed"}:
+            return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=body)
+        if code == "no_active_model_channel":
+            return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=body)
+        if code.endswith("_not_found"):
+            return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=body)
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=body)
     if detail.endswith("_exists"):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     if detail in {"agent_template_type_mismatch"}:

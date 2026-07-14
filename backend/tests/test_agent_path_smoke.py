@@ -269,7 +269,7 @@ def test_non_stream_tool_exception_returns_structured_error(monkeypatch: pytest.
     assert db.traces[0].status == "failed"
 
 
-def test_stream_tool_exception_currently_closes_with_done(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_tool_exception_emits_error_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = make_agent()
     tool = make_tool()
     db = FakeDB()
@@ -300,15 +300,17 @@ def test_stream_tool_exception_currently_closes_with_done(monkeypatch: pytest.Mo
         )
     )
 
+    assert [event["event"] for event in events] == ["delta", "error", "done"]
+    assert events[1]["data"]["code"] == "tool_execution_failed"
+    assert "boom" in events[1]["data"]["detail"]
     assert events[-1]["event"] == "done"
+    assert events[-1]["data"]["status"] == "failed"
     assert events[-1]["data"]["tool_results"][0]["status"] == "failed"
-    assert any(event["event"] == "delta" and "工具 echo 执行失败" in event["data"]["text"] for event in events)
+    assert not any(
+        event["event"] == "delta" and "工具 echo 执行失败" in event["data"]["text"] for event in events
+    )
 
 
-@pytest.mark.xfail(
-    reason="5a baseline: stream tool exceptions currently surface as a failure delta, not an SSE error event.",
-    strict=True,
-)
 def test_stream_tool_exception_should_emit_error_event_before_done(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = make_agent()
     tool = make_tool()
@@ -477,10 +479,65 @@ def test_stream_model_failure_commits_failed_trace_and_done(monkeypatch: pytest.
     assert db.traces[0].output == {"error": "maas_timeout"}
 
 
-@pytest.mark.xfail(
-    reason="D5: non-stream model failure path currently does not commit failed trace; expected to be fixed in batch 5b.",
-    strict=True,
-)
+def test_non_stream_dependency_failure_is_structured_and_committed(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = make_agent()
+    db = FakeDB()
+    install_repositories(monkeypatch, agents={agent.id: agent}, tools={})
+    install_agent_baseline(monkeypatch, agent=agent, context=make_context(agent))
+
+    async def failing_call_maas_chat(*args, **kwargs):
+        raise ConnectionError("redis unavailable")
+
+    monkeypatch.setattr(runtime, "call_maas_chat", failing_call_maas_chat)
+
+    with pytest.raises(runtime.OrchestratorError) as exc_info:
+        run_async(
+            runtime.run_agent(
+                db,
+                tenant_id=TENANT_ID,
+                user_id=USER_ID,
+                agent_id=agent.id,
+                payload=AgentRunIn(query="依赖失败"),
+            )
+        )
+
+    assert exc_info.value.code == "dependency_unavailable"
+    assert db.commits == 1
+    assert db.traces[0].status == "failed"
+    assert db.traces[0].output == {"error": "dependency_unavailable"}
+
+
+def test_stream_dependency_failure_is_structured_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = make_agent()
+    db = FakeDB()
+    install_repositories(monkeypatch, agents={agent.id: agent}, tools={})
+    install_agent_baseline(monkeypatch, agent=agent, context=make_context(agent))
+
+    async def failing_call_maas_chat_stream(*args, **kwargs):
+        raise ConnectionError("redis unavailable")
+        yield
+
+    monkeypatch.setattr(runtime, "call_maas_chat_stream", failing_call_maas_chat_stream)
+
+    events = run_async(
+        collect_events(
+            runtime.stream_agent_events(
+                db,
+                tenant_id=TENANT_ID,
+                user_id=USER_ID,
+                agent_id=agent.id,
+                payload=AgentRunIn(query="依赖失败"),
+            )
+        )
+    )
+
+    assert [event["event"] for event in events] == ["error", "done"]
+    assert events[0]["data"]["code"] == "dependency_unavailable"
+    assert events[-1]["data"]["status"] == "failed"
+    assert db.commits == 1
+    assert db.traces[0].output == {"error": "dependency_unavailable"}
+
+
 def test_non_stream_model_failure_should_commit_failed_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = make_agent()
     db = FakeDB()
