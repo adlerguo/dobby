@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import decrypt_secret, encrypt_secret
+from app.core.pricing import estimate_cost, estimate_custom_cost
 from app.models import model_channels, models, usage_records
 from app.schemas import ChannelCreate, ChannelOut, ChannelProbeIn, ChannelProbeOut, ChannelUpdate
 
@@ -425,16 +426,55 @@ async def record_usage(
         return
 
     usage = response.get("usage") or {}
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    cost = estimate_usage_cost(channel, response, prompt_tokens, completion_tokens)
     await db.execute(
         insert(usage_records).values(
             tenant_id=tenant_id,
             channel_id=channel["id"],
             model_id=channel["model_id"],
-            prompt_tokens=usage.get("prompt_tokens"),
-            completion_tokens=usage.get("completion_tokens"),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             latency_ms=latency_ms,
-            cost=0,
+            cost=cost,
             cache_hit=cache_hit,
         )
     )
     await db.commit()
+
+
+def estimate_usage_cost(
+    channel: dict[str, Any],
+    response: dict[str, Any],
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+) -> float:
+    provider_config = channel.get("provider_config") if isinstance(channel.get("provider_config"), dict) else {}
+    custom_cost = estimate_custom_cost_from_config(provider_config, prompt_tokens, completion_tokens)
+    if custom_cost is not None:
+        return custom_cost
+
+    model = response.get("model") or channel.get("model")
+    return estimate_cost(model, prompt_tokens, completion_tokens)
+
+
+def estimate_custom_cost_from_config(
+    provider_config: dict[str, Any],
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+) -> float | None:
+    # TODO: add first-class channel pricing fields when model_channels has a config column.
+    for key in ("pricing", "price", "cost"):
+        pricing = provider_config.get(key)
+        if not isinstance(pricing, dict):
+            continue
+        custom_cost = estimate_custom_cost(
+            pricing.get("input_per_million") or pricing.get("input_price_per_million"),
+            pricing.get("output_per_million") or pricing.get("output_price_per_million"),
+            prompt_tokens,
+            completion_tokens,
+        )
+        if custom_cost is not None:
+            return custom_cost
+    return None
