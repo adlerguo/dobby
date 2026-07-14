@@ -73,6 +73,9 @@ services:
         condition: service_started
       sandbox:
         condition: service_started
+    networks:
+      - default
+      - sandbox_net
 
   maas:
     build:
@@ -104,6 +107,10 @@ services:
       MAX_PROCESSES: ${SANDBOX_MAX_PROCESSES:-32}
     ports:
       - "8200:8200"
+    # sandbox_net is internal by default. If user-executed code needs public
+    # internet access, make that network non-internal and add explicit egress controls.
+    networks:
+      - sandbox_net
 
   frontend:
     build:
@@ -118,3 +125,7 @@ volumes:
   postgres_data:
   minio_data:
   app_secrets:
+
+networks:
+  sandbox_net:
+    internal: true
