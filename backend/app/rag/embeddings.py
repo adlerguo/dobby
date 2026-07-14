@@ -1,6 +1,7 @@
 import httpx
 
 from app.core.config import settings
+from app.core.maas_auth import maas_service_headers
 
 
 async def embed_texts(*, model: str, texts: list[str]) -> list[list[float]]:
@@ -8,6 +9,7 @@ async def embed_texts(*, model: str, texts: list[str]) -> list[list[float]]:
         response = await client.post(
             f"{settings.maas_base_url.rstrip('/')}/v1/embeddings",
             json={"model": model, "input": texts},
+            headers=maas_service_headers(),
         )
         try:
             response.raise_for_status()

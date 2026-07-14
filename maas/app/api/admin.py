@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_service_token
 from app.core.database import get_db
 from app.schemas import ChannelCreate, ChannelOut, ChannelProbeIn, ChannelProbeOut, ChannelUpdate
 from app.services import (
@@ -16,7 +17,7 @@ from app.services import (
     update_channel,
 )
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_service_token)])
 
 
 @router.get("/channels", response_model=list[ChannelOut], summary="List model channels")

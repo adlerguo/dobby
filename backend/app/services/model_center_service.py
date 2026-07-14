@@ -5,6 +5,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.maas_auth import maas_service_headers
 from app.models import Model, ModelCatalog, ModelChannel
 from app.schemas.model_center import (
     ConnectionTestOut,
@@ -121,7 +122,11 @@ async def probe_transient_catalog_channel(
     }
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(f"{settings.maas_base_url.rstrip('/')}/admin/channels/probe", json=body)
+            response = await client.post(
+                f"{settings.maas_base_url.rstrip('/')}/admin/channels/probe",
+                json=body,
+                headers=maas_service_headers(),
+            )
             response.raise_for_status()
             result = MaasProbeOut.model_validate(response.json())
     except httpx.HTTPError as exc:
@@ -150,7 +155,11 @@ async def create_maas_catalog_channel(
     }
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(f"{settings.maas_base_url.rstrip('/')}/admin/channels", json=body)
+            response = await client.post(
+                f"{settings.maas_base_url.rstrip('/')}/admin/channels",
+                json=body,
+                headers=maas_service_headers(),
+            )
             response.raise_for_status()
             return MaasChannelOut.model_validate(response.json())
     except httpx.HTTPError as exc:
@@ -160,7 +169,10 @@ async def create_maas_catalog_channel(
 async def probe_maas_channel(channel_id: UUID) -> MaasChannelOut:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(f"{settings.maas_base_url.rstrip('/')}/admin/channels/{channel_id}/health")
+            response = await client.post(
+                f"{settings.maas_base_url.rstrip('/')}/admin/channels/{channel_id}/health",
+                headers=maas_service_headers(),
+            )
             response.raise_for_status()
             return MaasChannelOut.model_validate(response.json())
     except httpx.HTTPStatusError as exc:

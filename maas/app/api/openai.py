@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_service_token
 from app.core.cache import get_redis
 from app.core.database import get_db
 from app.models import models
@@ -27,7 +28,7 @@ from app.services import (
     weighted_choice,
 )
 
-router = APIRouter(prefix="/v1", tags=["openai"])
+router = APIRouter(prefix="/v1", tags=["openai"], dependencies=[Depends(require_service_token)])
 
 
 @router.get("/models", response_model=list[ModelOut], summary="List logical models")

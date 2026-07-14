@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.maas_auth import maas_service_headers
 from app.core.storage import delete_object, upload_object
 from app.models import Document, KnowledgeBase, Model, ModelChannel
 from app.rag.chunk_store import delete_document_chunks
@@ -209,7 +210,10 @@ async def resolve_embedding_dim(db: AsyncSession, *, tenant_id: UUID, embedding_
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(f"{settings.maas_base_url.rstrip('/')}/admin/channels/{channel_id}/health")
+            response = await client.post(
+                f"{settings.maas_base_url.rstrip('/')}/admin/channels/{channel_id}/health",
+                headers=maas_service_headers(),
+            )
             response.raise_for_status()
             payload = response.json()
     except httpx.HTTPError as exc:

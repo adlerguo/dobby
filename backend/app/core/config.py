@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     minio_bucket: str = Field(default="eap-documents")
     minio_secure: bool = Field(default=False)
     maas_base_url: str = Field(default="http://maas:8100")
+    maas_admin_token: str | None = Field(default=None)
     sandbox_base_url: str = Field(default="http://sandbox:8200")
     jwt_secret: str | None = Field(default=None)
     jwt_access_ttl: int = Field(default=3600)

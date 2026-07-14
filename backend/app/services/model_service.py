@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.maas_auth import maas_service_headers
 from app.models import Model, ModelChannel
 from app.schemas.models import ModelChannelOut, ModelHubCreate, ModelHubUpdate
 from app.services.validation import detail_from_integrity_error, normalize_unique_text
@@ -140,7 +141,11 @@ async def create_maas_channel(*, tenant_id: UUID, payload: ModelHubCreate) -> No
     }
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(f"{settings.maas_base_url.rstrip('/')}/admin/channels", json=body)
+            response = await client.post(
+                f"{settings.maas_base_url.rstrip('/')}/admin/channels",
+                json=body,
+                headers=maas_service_headers(),
+            )
             response.raise_for_status()
     except httpx.HTTPError as exc:
         raise ValueError("model_channel_create_failed") from exc

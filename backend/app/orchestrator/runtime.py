@@ -8,6 +8,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.maas_auth import maas_service_headers
 from app.models import Agent, Conversation, Message, Model, RunTrace, Tool
 from app.orchestrator.context import build_agent_context, estimate_tokens
 from app.repositories import AgentRepository, ToolRepository
@@ -466,7 +467,11 @@ async def call_maas_chat(
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{settings.maas_base_url.rstrip('/')}/v1/chat/completions", json=request)
+            response = await client.post(
+                f"{settings.maas_base_url.rstrip('/')}/v1/chat/completions",
+                json=request,
+                headers=maas_service_headers(),
+            )
         response.raise_for_status()
         data = response.json()
         usage = data.get("usage") or {}
@@ -533,6 +538,7 @@ async def call_maas_chat_stream(
                 "POST",
                 f"{settings.maas_base_url.rstrip('/')}/v1/chat/completions",
                 json=request,
+                headers=maas_service_headers(),
             ) as response:
                 if response.status_code >= 400:
                     body = await response.aread()

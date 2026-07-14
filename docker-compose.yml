@@ -52,6 +52,8 @@ services:
       MINIO_KEY: ${MINIO_KEY:-minioadmin}
       MINIO_SECRET: ${MINIO_SECRET:-minioadmin}
       MAAS_BASE_URL: ${MAAS_BASE_URL:-http://maas:8100}
+      # Shared backend-to-MaaS service token; do not expose the MaaS port publicly.
+      MAAS_ADMIN_TOKEN: ${MAAS_ADMIN_TOKEN:-dev-maas-admin-token-change-me}
       SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-http://sandbox:8200}
       APP_SECRETS_DIR: /data/secrets
       AUTO_GENERATE_SECRETS: "true"
@@ -87,6 +89,8 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       APP_SECRETS_DIR: /data/secrets
       AUTO_GENERATE_SECRETS: "true"
+      # Shared backend-to-MaaS service token; do not expose the MaaS port publicly.
+      MAAS_ADMIN_TOKEN: ${MAAS_ADMIN_TOKEN:-dev-maas-admin-token-change-me}
       PRODUCTION_MODE: ${PRODUCTION_MODE:-true}
     volumes:
       - app_secrets:/data/secrets
