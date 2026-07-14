@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     upstream_read_timeout: float = Field(default=60.0)
     upstream_write_timeout: float = Field(default=10.0)
     upstream_pool_timeout: float = Field(default=5.0)
+    channel_health_probe_interval: int = Field(default=30)
+    channel_failed_ttl: int = Field(default=60)
     production_mode: bool = Field(default=True)
 
 

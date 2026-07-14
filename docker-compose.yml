@@ -101,6 +101,9 @@ services:
       UPSTREAM_READ_TIMEOUT: ${UPSTREAM_READ_TIMEOUT:-60}
       UPSTREAM_WRITE_TIMEOUT: ${UPSTREAM_WRITE_TIMEOUT:-10}
       UPSTREAM_POOL_TIMEOUT: ${UPSTREAM_POOL_TIMEOUT:-5}
+      # MaaS failed channel auto-recovery probe interval and minimum failed TTL in seconds.
+      CHANNEL_HEALTH_PROBE_INTERVAL: ${CHANNEL_HEALTH_PROBE_INTERVAL:-30}
+      CHANNEL_FAILED_TTL: ${CHANNEL_FAILED_TTL:-60}
       PRODUCTION_MODE: ${PRODUCTION_MODE:-true}
     volumes:
       - app_secrets:/data/secrets
