@@ -12,6 +12,9 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
+import sqlglot
+from sqlglot import exp
+from sqlglot.tokens import TokenType, Tokenizer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -355,23 +358,137 @@ def top_n_from_question(question: str, *, default: int) -> int:
 
 def validate_select_sql(sql: str, *, allowed_tables: set[str]) -> str:
     cleaned = sql.strip().rstrip(";")
-    lowered = cleaned.lower()
-    if not (lowered.startswith("select ") or lowered.startswith("with ")):
+    allowed = {table.lower() for table in allowed_tables}
+    try:
+        statements = sqlglot.parse(cleaned, read="sqlite")
+    except sqlglot.errors.ParseError as exc:
+        if contains_forbidden_metadata_token(cleaned):
+            raise ValueError("forbidden_construct") from exc
+        if contains_write_or_admin_token(cleaned):
+            raise ValueError("write_or_admin_statement_not_allowed") from exc
+        raise ValueError("sql_parse_failed") from exc
+
+    if not statements:
         raise ValueError("only_select_allowed")
-    if ";" in cleaned:
+    if len(statements) > 1:
         raise ValueError("multiple_statements_not_allowed")
-    blocked = (" insert ", " update ", " delete ", " drop ", " alter ", " create ", " attach ", " detach ", " pragma ")
-    padded = f" {lowered} "
-    if any(keyword in padded for keyword in blocked):
+
+    statement = statements[0]
+    if contains_forbidden_metadata(statement):
+        raise ValueError("forbidden_construct")
+    if not is_select_statement(statement):
+        raise ValueError("write_or_admin_statement_not_allowed")
+    if contains_write_or_admin_statement(statement):
         raise ValueError("write_or_admin_statement_not_allowed")
 
-    tables = set(re.findall(r"\bfrom\s+([a-zA-Z_][\w]*)|\bjoin\s+([a-zA-Z_][\w]*)", lowered))
-    flat_tables = {item for pair in tables for item in pair if item}
-    if flat_tables and not flat_tables.issubset(allowed_tables):
+    physical_tables = referenced_physical_tables(statement)
+    if physical_tables & SQLITE_METADATA_TABLES:
+        raise ValueError("forbidden_construct")
+    if not physical_tables.issubset(allowed):
         raise ValueError("table_not_allowed")
-    if " limit " not in padded and "count(" not in lowered:
-        cleaned = f"{cleaned} LIMIT 50"
-    return cleaned
+
+    normalized_sql = statement.sql(dialect="sqlite")
+    select_expression = top_level_select(statement)
+    if (
+        select_expression is not None
+        and not select_expression.args.get("limit")
+        and not is_pure_count_query(select_expression)
+    ):
+        normalized_sql = f"{normalized_sql} LIMIT 50"
+    return normalized_sql
+
+
+SQLITE_METADATA_TABLES = {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema"}
+SQLITE_ADMIN_KEYWORDS = {"attach", "detach", "pragma"}
+WRITE_OR_ADMIN_KEYWORDS = {"alter", "create", "delete", "drop", "insert", "merge", "replace", "truncate", "update"}
+
+WRITE_OR_ADMIN_EXPRESSIONS = tuple(
+    expression_type
+    for expression_type in (
+        getattr(exp, "Alter", None),
+        getattr(exp, "Command", None),
+        getattr(exp, "Create", None),
+        getattr(exp, "Delete", None),
+        getattr(exp, "Drop", None),
+        getattr(exp, "Insert", None),
+        getattr(exp, "Merge", None),
+        getattr(exp, "TruncateTable", None),
+        getattr(exp, "Update", None),
+    )
+    if expression_type is not None
+)
+
+
+def is_select_statement(statement: exp.Expression) -> bool:
+    return top_level_select(statement) is not None
+
+
+def top_level_select(statement: exp.Expression) -> exp.Select | None:
+    if isinstance(statement, exp.Select):
+        return statement
+    if isinstance(statement, exp.With) and isinstance(statement.this, exp.Select):
+        return statement.this
+    return None
+
+
+def contains_write_or_admin_statement(statement: exp.Expression) -> bool:
+    return any(isinstance(node, WRITE_OR_ADMIN_EXPRESSIONS) for node in statement.walk())
+
+
+def contains_forbidden_metadata(statement: exp.Expression) -> bool:
+    for node in statement.walk():
+        class_name = node.__class__.__name__.lower()
+        if class_name in {"pragma", "attach", "detach"}:
+            return True
+        if isinstance(node, exp.Command):
+            command_sql = node.sql(dialect="sqlite").strip().lower()
+            if command_sql.startswith(("pragma", "attach", "detach")):
+                return True
+    return False
+
+
+def contains_forbidden_metadata_token(sql: str) -> bool:
+    return any(token in SQLITE_ADMIN_KEYWORDS for token in sql_keyword_tokens(sql))
+
+
+def contains_write_or_admin_token(sql: str) -> bool:
+    return any(token in WRITE_OR_ADMIN_KEYWORDS for token in sql_keyword_tokens(sql))
+
+
+def sql_keyword_tokens(sql: str) -> set[str]:
+    return {
+        token.text.lower()
+        for token in Tokenizer(dialect="sqlite").tokenize(sql)
+        if token.token_type not in {TokenType.STRING, TokenType.BIT_STRING, TokenType.HEX_STRING}
+    }
+
+
+def referenced_physical_tables(statement: exp.Expression) -> set[str]:
+    cte_names = {normalize_sql_identifier(cte.alias_or_name) for cte in statement.find_all(exp.CTE)}
+    tables: set[str] = set()
+    for table in statement.find_all(exp.Table):
+        table_name = normalize_sql_identifier(table.name)
+        # CTE names appear as Table nodes in outer SELECTs, but they are not physical tables.
+        if table_name and table_name not in cte_names:
+            tables.add(table_name)
+    return tables
+
+
+def normalize_sql_identifier(identifier: str) -> str:
+    return identifier.strip('"`[]').lower()
+
+
+def is_pure_count_query(statement: exp.Select) -> bool:
+    if statement.args.get("group") or statement.args.get("having"):
+        return False
+    expressions = statement.expressions or []
+    if not expressions:
+        return False
+    for expression in expressions:
+        projected = expression.this if isinstance(expression, exp.Alias) else expression
+        if not isinstance(projected, exp.Count):
+            return False
+    return True
 
 
 def rows_to_csv(columns: list[str], rows: list[dict[str, Any]]) -> str:
