@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models import Agent, Conversation, Message, Model, RunTrace, Tool
 from app.orchestrator.context import build_agent_context, estimate_tokens
-from app.repositories import AgentRepository
+from app.repositories import AgentRepository, ToolRepository
 from app.schemas import AgentRunIn, AgentRunOut, ContextBuildOut, RuntimeToolCallIn, RuntimeToolCallOut
 from app.services import run_tool
 from app.services.workspace_service import get_workspace_resource_ids, load_workspace
@@ -122,7 +122,8 @@ async def run_agent(
 
     final_response = first_response
     answer = first_answer
-    if tool_results:
+    tool_failed = any(result.status == "failed" for result in tool_results)
+    if tool_results and not tool_failed:
         messages.append({"role": "assistant", "content": first_answer})
         messages.append({"role": "user", "content": tool_result_prompt(tool_results)})
         final_response = await call_maas_chat(
@@ -139,6 +140,8 @@ async def run_agent(
         answer = extract_answer(final_response)
         if agent.type == "nl2data":
             answer = format_nl2data_answer(tool_results)
+    elif tool_failed:
+        answer = format_tool_failure_answer(tool_results)
 
     usage = final_response.get("usage") or {}
     assistant_message = Message(
@@ -150,7 +153,7 @@ async def run_agent(
         citations=[citation.model_dump(mode="json") for citation in context.citations],
     )
     db.add(assistant_message)
-    root_trace.status = "ok"
+    root_trace.status = "failed" if tool_failed else "ok"
     root_trace.output = {
         "answer": answer,
         "usage": usage,
@@ -307,7 +310,8 @@ async def stream_agent_events(
         requested_tool_calls=payload.tool_calls or auto_tool_calls(agent, context, payload.query),
         max_tool_rounds=payload.max_tool_rounds,
     )
-    if tool_results:
+    tool_failed = any(result.status == "failed" for result in tool_results)
+    if tool_results and not tool_failed:
         final_messages = [*messages, {"role": "assistant", "content": answer}, {"role": "user", "content": tool_result_prompt(tool_results)}]
         final_response = await call_maas_chat(
             db,
@@ -323,6 +327,10 @@ async def stream_agent_events(
         answer = extract_answer(final_response)
         usage = final_response.get("usage") or usage
         yield {"event": "delta", "data": {"text": "\n\n" + answer}}
+    elif tool_failed:
+        tool_error_answer = format_tool_failure_answer(tool_results)
+        answer = answer + "\n\n" + tool_error_answer if answer else tool_error_answer
+        yield {"event": "delta", "data": {"text": "\n\n" + tool_error_answer}}
 
     assistant_message = Message(
         tenant_id=tenant_id,
@@ -333,7 +341,7 @@ async def stream_agent_events(
         citations=[citation.model_dump(mode="json") for citation in context.citations],
     )
     db.add(assistant_message)
-    root_trace.status = "ok"
+    root_trace.status = "failed" if tool_failed else "ok"
     root_trace.output = {
         "answer": answer,
         "usage": usage,
@@ -615,17 +623,41 @@ async def run_tool_loop(
     if not tool_calls:
         return []
 
+    repo = ToolRepository(db, tenant_id)
     available_by_id = {tool.id: tool for tool in context.tools}
     available_by_name = {tool.name: tool for tool in context.tools}
     results: list[RuntimeToolCallOut] = []
     for call in tool_calls[:max_tool_rounds]:
-        tool = None
+        context_tool = None
         if call.tool_id is not None:
-            tool = available_by_id.get(call.tool_id)
-        if tool is None and call.tool_name is not None:
-            tool = available_by_name.get(call.tool_name)
-        if tool is None:
-            raise ValueError("tool_not_bound")
+            context_tool = available_by_id.get(call.tool_id)
+        if context_tool is None and call.tool_name is not None:
+            context_tool = available_by_name.get(call.tool_name)
+        if context_tool is None:
+            if call.tool_id is not None:
+                results.append(
+                    RuntimeToolCallOut(
+                        tool_id=call.tool_id,
+                        tool_name=call.tool_name or "unknown",
+                        input=call.input,
+                        output={"error": "tool_not_bound"},
+                        status="failed",
+                    )
+                )
+            continue
+
+        tool = await repo.get_by_id(context_tool.id)
+        if tool is None or tool.status != "active":
+            results.append(
+                RuntimeToolCallOut(
+                    tool_id=context_tool.id,
+                    tool_name=context_tool.name,
+                    input=call.input,
+                    output={"error": "tool_not_found"},
+                    status="failed",
+                )
+            )
+            continue
 
         trace = RunTrace(
             tenant_id=tenant_id,
@@ -642,7 +674,7 @@ async def run_tool_loop(
         await db.flush()
         started = time.perf_counter()
         if is_code_tool(tool) and not is_code_tool_allowed(tool):
-            output = RuntimeToolCallOut(
+            output_result = RuntimeToolCallOut(
                 tool_id=tool.id,
                 tool_name=tool.name,
                 input=call.input,
@@ -650,18 +682,42 @@ async def run_tool_loop(
                 status="failed",
             )
             trace.status = "failed"
-            trace.output = output.model_dump(mode="json")
+            trace.output = output_result.model_dump(mode="json")
             trace.latency_ms = int((time.perf_counter() - started) * 1000)
             await db.flush()
-            results.append(output)
+            results.append(output_result)
             continue
 
-        output = await run_tool(db, tenant_id=tenant_id, tool_id=tool.id, input=call.input)
-        if output is None:
+        try:
+            output = await run_tool(db, tenant_id=tenant_id, tool_id=tool.id, input=call.input)
+        except Exception as exc:
+            failed = RuntimeToolCallOut(
+                tool_id=tool.id,
+                tool_name=tool.name,
+                input=call.input,
+                output={"error": "tool_execution_failed", "detail": str(exc)},
+                status="failed",
+            )
             trace.status = "failed"
-            trace.output = {"error": "tool_not_found"}
+            trace.output = failed.model_dump(mode="json")
+            trace.latency_ms = int((time.perf_counter() - started) * 1000)
             await db.flush()
-            raise ValueError("tool_not_found")
+            results.append(failed)
+            continue
+        if output is None:
+            output_result = RuntimeToolCallOut(
+                tool_id=tool.id,
+                tool_name=tool.name,
+                input=call.input,
+                output={"error": "tool_not_found"},
+                status="failed",
+            )
+            trace.status = "failed"
+            trace.output = output_result.model_dump(mode="json")
+            trace.latency_ms = int((time.perf_counter() - started) * 1000)
+            await db.flush()
+            results.append(output_result)
+            continue
 
         trace.status = output.status
         trace.output = output.model_dump(mode="json")
@@ -757,6 +813,17 @@ def format_nl2data_answer(results: list[RuntimeToolCallOut]) -> str:
         for row in rows[:10]:
             lines.append("- " + "，".join(f"{key}={value}" for key, value in row.items()))
     return "\n".join(lines)
+
+
+def format_tool_failure_answer(results: list[RuntimeToolCallOut]) -> str:
+    failed = next((result for result in results if result.status == "failed"), None)
+    if failed is None:
+        return "工具执行失败。"
+    error = failed.output.get("error") or "tool_execution_failed"
+    detail = failed.output.get("detail")
+    if detail:
+        return f"工具 {failed.tool_name} 执行失败：{detail}"
+    return f"工具 {failed.tool_name} 执行失败：{error}"
 
 
 def extract_answer(response: dict[str, Any]) -> str:
