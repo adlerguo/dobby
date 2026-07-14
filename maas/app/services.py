@@ -238,7 +238,7 @@ async def proxy_openai_with_key(
         request_payload["model"] = upstream_model
     if channel.get("provider") == "deepseek" and path == "/v1/chat/completions":
         request_payload["model"] = upstream_model or "deepseek-chat"
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=upstream_timeout()) as client:
         response = await client.post(
             f"{base_url}{path}",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -265,7 +265,7 @@ async def proxy_openai_stream(
     if channel.get("provider") == "deepseek" and path == "/v1/chat/completions":
         request_payload["model"] = upstream_model or "deepseek-chat"
 
-    async with httpx.AsyncClient(timeout=None) as client:
+    async with httpx.AsyncClient(timeout=upstream_timeout()) as client:
         async with client.stream(
             "POST",
             f"{base_url}{path}",
@@ -376,6 +376,15 @@ def summarize_probe_error(exc: Exception) -> str:
     if isinstance(exc, httpx.RequestError):
         return "provider_request_failed"
     return "provider_probe_failed"
+
+
+def upstream_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=settings.upstream_connect_timeout,
+        read=settings.upstream_read_timeout,
+        write=settings.upstream_write_timeout,
+        pool=settings.upstream_pool_timeout,
+    )
 
 
 def exact_cache_key(kind: str, payload: dict[str, Any]) -> str:

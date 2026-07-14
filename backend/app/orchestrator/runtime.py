@@ -292,6 +292,17 @@ async def stream_agent_events(
         await db.flush()
         await db.commit()
         yield {"event": "error", "data": {"detail": str(exc)}}
+        yield {
+            "event": "done",
+            "data": {
+                "conversation_id": str(conversation.id),
+                "trace_id": str(root_trace.id),
+                "usage": usage,
+                "tool_results": [],
+                "citation_count": len(context.citations),
+                "status": "failed",
+            },
+        }
         return
 
     if not citations_sent:
@@ -466,7 +477,7 @@ async def call_maas_chat(
     started = time.perf_counter()
 
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=upstream_timeout()) as client:
             response = await client.post(
                 f"{settings.maas_base_url.rstrip('/')}/v1/chat/completions",
                 json=request,
@@ -533,7 +544,7 @@ async def call_maas_chat_stream(
     finish_reason = None
 
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=upstream_timeout()) as client:
             async with client.stream(
                 "POST",
                 f"{settings.maas_base_url.rstrip('/')}/v1/chat/completions",
@@ -597,6 +608,8 @@ def maas_stream_error_detail(body: bytes) -> str:
 
 
 def maas_error_detail(exc: httpx.HTTPError) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "maas_timeout"
     if isinstance(exc, httpx.HTTPStatusError):
         try:
             payload = exc.response.json()
@@ -606,6 +619,15 @@ def maas_error_detail(exc: httpx.HTTPError) -> str:
         if isinstance(detail, str) and detail:
             return detail
     return "maas_call_failed"
+
+
+def upstream_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=settings.upstream_connect_timeout,
+        read=settings.upstream_read_timeout,
+        write=settings.upstream_write_timeout,
+        pool=settings.upstream_pool_timeout,
+    )
 
 
 async def run_tool_loop(

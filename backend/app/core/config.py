@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     code_tool_allowlist: str = Field(default="")
     max_request_body_bytes: int = Field(default=2_097_152)
     http_tool_allowed_hosts: str = Field(default="")
+    upstream_connect_timeout: float = Field(default=5.0)
+    upstream_read_timeout: float = Field(default=60.0)
+    upstream_write_timeout: float = Field(default=10.0)
+    upstream_pool_timeout: float = Field(default=5.0)
 
 
 settings = Settings()

@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     maas_admin_token: str | None = Field(default=None)
     maas_cache_ttl: int = Field(default=300)
     max_request_body_bytes: int = Field(default=2_097_152)
+    upstream_connect_timeout: float = Field(default=5.0)
+    upstream_read_timeout: float = Field(default=60.0)
+    upstream_write_timeout: float = Field(default=10.0)
+    upstream_pool_timeout: float = Field(default=5.0)
     production_mode: bool = Field(default=True)
 
 

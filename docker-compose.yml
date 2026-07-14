@@ -58,6 +58,11 @@ services:
       APP_SECRETS_DIR: /data/secrets
       AUTO_GENERATE_SECRETS: "true"
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-3600}
+      # Upstream model/service timeouts in seconds; streaming read timeout must stay finite.
+      UPSTREAM_CONNECT_TIMEOUT: ${UPSTREAM_CONNECT_TIMEOUT:-5}
+      UPSTREAM_READ_TIMEOUT: ${UPSTREAM_READ_TIMEOUT:-60}
+      UPSTREAM_WRITE_TIMEOUT: ${UPSTREAM_WRITE_TIMEOUT:-10}
+      UPSTREAM_POOL_TIMEOUT: ${UPSTREAM_POOL_TIMEOUT:-5}
       ENABLE_AUTO_CODE_TOOLS: ${ENABLE_AUTO_CODE_TOOLS:-false}
       CODE_TOOL_ALLOWLIST: ${CODE_TOOL_ALLOWLIST:-}
       # Trusted external hosts for HTTP tools; keep empty unless a domain is explicitly approved.
@@ -91,6 +96,11 @@ services:
       AUTO_GENERATE_SECRETS: "true"
       # Shared backend-to-MaaS service token; do not expose the MaaS port publicly.
       MAAS_ADMIN_TOKEN: ${MAAS_ADMIN_TOKEN:-dev-maas-admin-token-change-me}
+      # Upstream model provider timeouts in seconds; streaming read timeout must stay finite.
+      UPSTREAM_CONNECT_TIMEOUT: ${UPSTREAM_CONNECT_TIMEOUT:-5}
+      UPSTREAM_READ_TIMEOUT: ${UPSTREAM_READ_TIMEOUT:-60}
+      UPSTREAM_WRITE_TIMEOUT: ${UPSTREAM_WRITE_TIMEOUT:-10}
+      UPSTREAM_POOL_TIMEOUT: ${UPSTREAM_POOL_TIMEOUT:-5}
       PRODUCTION_MODE: ${PRODUCTION_MODE:-true}
     volumes:
       - app_secrets:/data/secrets
