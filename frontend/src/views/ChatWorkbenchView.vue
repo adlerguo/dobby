@@ -7,7 +7,7 @@ import EmptyState from '../components/common/EmptyState.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import StatusTag from '../components/common/StatusTag.vue'
-import type { Agent, Citation, Workspace } from '../api/types'
+import type { Agent, Citation, KnowledgeChunk, Workspace } from '../api/types'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -31,6 +31,8 @@ const runMeta = ref<Record<string, unknown> | null>(null)
 const traceCards = ref<TraceCard[]>([])
 const citationDrawer = ref(false)
 const selectedCitation = ref<Citation | null>(null)
+const citationContextChunks = ref<KnowledgeChunk[]>([])
+const citationContextLoading = ref(false)
 const streaming = ref(false)
 const md = new MarkdownIt({
   html: false,
@@ -124,16 +126,26 @@ async function sendMessage() {
         const event = parseSseEvent(part)
         if (event.event === 'delta') assistant.text += event.data.text || ''
         if (event.event === 'citation') {
-          citations.value.push(event.data)
-          traceCards.value.push({
-            title: '知识库检索',
-            status: 'success',
-            detail: `命中引用：${event.data.doc_name || event.data.doc_id || '未知来源'}，分数 ${event.data.score ?? '-'}`,
-          })
+          const exists = citations.value.some((citation) => citation.chunk_id && citation.chunk_id === event.data.chunk_id)
+          if (!exists) {
+            citations.value.push(event.data)
+            traceCards.value.push({
+              title: '知识库检索',
+              status: 'success',
+              detail: `命中引用：${citationTitle(event.data, citations.value.length)}，分数 ${formatScore(event.data.score)}`,
+            })
+          }
         }
         if (event.event === 'done') {
           runMeta.value = event.data
           traceCards.value = traceCards.value.map((card) => (card.status === 'running' ? { ...card, status: 'success' } : card))
+          if (citations.value.length === 0) {
+            traceCards.value.push({
+              title: '知识库检索',
+              status: 'warning',
+              detail: '未命中知识库或当前智能体未绑定知识库，本次回答没有使用引用出处。',
+            })
+          }
           traceCards.value.push({
             title: '生成回答',
             status: 'success',
@@ -152,9 +164,17 @@ async function sendMessage() {
   }
 }
 
-function openCitation(citation: Citation) {
+async function openCitation(citation: Citation) {
   selectedCitation.value = citation
   citationDrawer.value = true
+  citationContextChunks.value = []
+  if (!citation.doc_id) return
+  citationContextLoading.value = true
+  try {
+    citationContextChunks.value = await apiFetch<KnowledgeChunk[]>(`/documents/${citation.doc_id}/chunks`)
+  } finally {
+    citationContextLoading.value = false
+  }
 }
 
 function renderMarkdown(text: string) {
@@ -178,6 +198,20 @@ function copyCitationSnippet() {
   if (selectedCitation.value?.snippet) {
     window.navigator.clipboard?.writeText(selectedCitation.value.snippet)
   }
+}
+
+function citationTitle(citation: Citation, index: number) {
+  const seq = citation.seq == null ? '-' : `#${citation.seq}`
+  return `${citation.doc_name || `引用 ${index}`} · 切片 ${seq}`
+}
+
+function formatScore(value: number | null | undefined, digits = 3) {
+  return value == null ? '-' : Number(value).toFixed(digits)
+}
+
+function formatChannels(channels: Citation['match_channels']) {
+  if (!channels?.length) return '未知'
+  return channels.map((channel) => (channel === 'vector' ? '向量' : channel === 'keyword' ? '关键词' : channel)).join(' / ')
 }
 
 onMounted(loadOptions)
@@ -230,15 +264,29 @@ onMounted(loadOptions)
             <strong><StatusTag :status="card.status" :label="card.title" /></strong>
             <p class="muted">{{ card.detail }}</p>
           </div>
-          <el-alert :title="`引用 ${citations.length} 条，点击引用可查看证据链。`" type="info" :closable="false" />
+          <el-alert
+            v-if="citations.length > 0"
+            :title="`引用 ${citations.length} 条，点击引用可定位来源文档和切片。`"
+            type="info"
+            :closable="false"
+          />
+          <el-alert
+            v-else-if="runMeta"
+            title="未命中知识库或当前智能体未绑定知识库，本次回答没有使用引用出处。"
+            type="warning"
+            :closable="false"
+          />
           <article v-for="(citation, index) in citations" :key="citation.chunk_id || index" class="result-card">
             <div class="result-meta">
-              <strong>{{ citation.doc_name || `引用 ${index + 1}` }}</strong>
-              <StatusTag v-if="citation.score != null" status="success" :label="Number(citation.score).toFixed(3)" />
+              <strong>{{ citationTitle(citation, index + 1) }}</strong>
+              <StatusTag v-if="citation.score != null" status="success" :label="`RRF ${formatScore(citation.score)}`" />
+              <StatusTag v-if="citation.vector_score != null" status="processing" :label="`向量 ${formatScore(citation.vector_score)}`" />
+              <StatusTag v-if="citation.text_score != null" status="neutral" :label="`关键词 ${formatScore(citation.text_score)}`" />
+              <span class="mono-id">{{ formatChannels(citation.match_channels) }}</span>
               <span v-if="citation.chunk_id" class="mono-id">{{ citation.chunk_id }}</span>
             </div>
             <p>{{ citation.snippet }}</p>
-            <el-button size="small" @click="openCitation(citation)">查看证据链 [{{ index + 1 }}]</el-button>
+            <el-button size="small" @click="openCitation(citation)">定位来源 [{{ index + 1 }}]</el-button>
           </article>
           <article v-if="runMeta" class="result-card">
             <pre>{{ JSON.stringify(runMeta, null, 2) }}</pre>
@@ -251,18 +299,73 @@ onMounted(loadOptions)
       <div v-if="selectedCitation" class="stack">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="来源文档">{{ selectedCitation.doc_name || '未知文档' }}</el-descriptions-item>
-          <el-descriptions-item label="相似度">{{ selectedCitation.score ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="切片序号">{{ selectedCitation.seq == null ? '-' : `#${selectedCitation.seq}` }}</el-descriptions-item>
+          <el-descriptions-item label="综合排名分">{{ formatScore(selectedCitation.score) }}</el-descriptions-item>
+          <el-descriptions-item label="向量相似度">{{ formatScore(selectedCitation.vector_score) }}</el-descriptions-item>
+          <el-descriptions-item label="关键词分">{{ formatScore(selectedCitation.text_score) }}</el-descriptions-item>
+          <el-descriptions-item label="匹配通道">{{ formatChannels(selectedCitation.match_channels) }}</el-descriptions-item>
           <el-descriptions-item label="片段 ID">{{ selectedCitation.chunk_id || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="文档 ID">{{ selectedCitation.doc_id || '-' }}</el-descriptions-item>
         </el-descriptions>
         <section class="result-card">
           <strong>命中片段</strong>
           <p>{{ selectedCitation.snippet }}</p>
         </section>
+        <section class="result-card">
+          <strong>文档切片定位</strong>
+          <p class="muted">显示当前文档的切片列表，当前引用片段会高亮。</p>
+          <div v-loading="citationContextLoading" class="citation-context">
+            <article
+              v-for="chunk in citationContextChunks"
+              :key="chunk.id"
+              class="context-chunk"
+              :class="{ active: chunk.id === selectedCitation.chunk_id }"
+            >
+              <div class="result-meta">
+                <strong>切片 #{{ chunk.seq ?? '-' }}</strong>
+                <span class="mono-id">{{ chunk.id }}</span>
+              </div>
+              <p>{{ chunk.content }}</p>
+            </article>
+            <EmptyState
+              v-if="!citationContextLoading && citationContextChunks.length === 0"
+              title="无法加载切片上下文"
+              description="该引用只返回了片段摘要，暂时无法定位完整切片。"
+            />
+          </div>
+        </section>
         <div class="form-actions">
-          <el-button>打开文档详情</el-button>
+          <el-button disabled>文档定位已显示在上方</el-button>
           <el-button type="primary" @click="copyCitationSnippet">复制原文</el-button>
         </div>
       </div>
     </el-drawer>
   </section>
 </template>
+
+<style scoped>
+.citation-context {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.context-chunk {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--color-bg-card);
+}
+
+.context-chunk.active {
+  border-color: var(--color-brand-primary);
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow: var(--shadow-card);
+}
+
+.context-chunk p {
+  margin: var(--space-3) 0 0;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+</style>

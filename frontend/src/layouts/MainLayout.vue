@@ -13,6 +13,7 @@ import {
   LayoutTemplate,
   LogOut,
   MessageSquareText,
+  Rocket,
   Search,
 } from 'lucide-vue-next'
 import { computed } from 'vue'
@@ -27,7 +28,10 @@ const router = useRouter()
 const navGroups = [
   {
     label: '工作台',
-    items: [{ path: '/dashboard', label: '首页工作台', icon: Gauge }],
+    items: [
+      { path: '/quickstart', label: '快速开始', icon: Rocket },
+      { path: '/dashboard', label: '首页工作台', icon: Gauge },
+    ],
   },
   {
     label: '构建',

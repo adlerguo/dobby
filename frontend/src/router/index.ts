@@ -8,6 +8,7 @@ const router = createRouter({
       component: () => import('../layouts/MainLayout.vue'),
       children: [
         { path: '', redirect: '/dashboard' },
+        { path: 'quickstart', component: () => import('../views/QuickstartView.vue') },
         { path: 'dashboard', component: () => import('../views/DashboardView.vue') },
         { path: 'agents', component: () => import('../views/AgentListView.vue') },
         { path: 'model-hub', component: () => import('../views/ModelHubView.vue') },

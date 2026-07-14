@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     service_name: str = "sandbox"
     exec_timeout_seconds: int = 10
     exec_output_limit: int = 12000
+    max_concurrency: int = 2
+    cpu_seconds: int = 5
+    memory_mb: int = 256
+    max_open_files: int = 64
+    max_processes: int = 32
 
 
 settings = Settings()

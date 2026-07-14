@@ -160,7 +160,16 @@ async def retrieve_agent_knowledge(
         citations.extend(result.citations)
 
     ranked = sorted(zip(chunks, citations, strict=False), key=lambda pair: pair[0].score, reverse=True)
-    ranked = ranked[:top_k]
+    deduped: list[tuple[RetrievedChunkOut, CitationOut]] = []
+    seen_chunk_ids: set[UUID] = set()
+    for chunk, citation in ranked:
+        if chunk.id in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(chunk.id)
+        deduped.append((chunk, citation))
+        if len(deduped) >= top_k:
+            break
+    ranked = deduped
     return [pair[0] for pair in ranked], [pair[1] for pair in ranked]
 
 
@@ -321,7 +330,8 @@ def fit_knowledge(
     truncated = False
 
     for index, (chunk, citation) in enumerate(zip(chunks, citations, strict=False), start=1):
-        prefix = f"[{index}] doc={citation.doc_name} chunk_id={chunk.id} score={chunk.score}\n"
+        seq = f"#{citation.seq}" if citation.seq is not None else "-"
+        prefix = f"[{index}] doc={citation.doc_name} chunk={seq} chunk_id={chunk.id} score={chunk.score}\n"
         available = budget - used - estimate_tokens(prefix)
         if available <= 0:
             truncated = True

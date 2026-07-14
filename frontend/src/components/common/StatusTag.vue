@@ -19,7 +19,7 @@ const semantic = computed(() => {
   if (['running', 'processing', 'connecting', 'parsing', 'info', '连接中', '解析中', '运行中'].includes(value)) {
     return 'info'
   }
-  if (['warning', 'pending', 'draft_required', 'unpublished', 'needs_real_key', '待配置', '未发布'].includes(value)) {
+  if (['warning', 'pending', 'draft_required', 'unpublished', 'needs_real_key', 'demo_only', '待配置', '未发布'].includes(value)) {
     return 'warning'
   }
   if (['danger', 'failed', 'error', 'disabled', 'inactive', '连接失败', '已停用', '停用'].includes(value)) {
@@ -49,6 +49,7 @@ const text = computed(() => {
     draft: '草稿',
     verified_local: '可直接体验',
     needs_real_key: '需自备 API Key',
+    demo_only: '演示模型（非真实）',
   }
   return labels[value] || String(props.status || '未知')
 })

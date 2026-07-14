@@ -216,7 +216,12 @@ export interface Citation {
   chunk_id?: string
   doc_id?: string
   doc_name?: string
+  seq?: number | null
+  content_length?: number
   score?: number | null
+  vector_score?: number | null
+  text_score?: number | null
+  match_channels?: Array<'vector' | 'keyword' | string>
   snippet?: string
 }
 

@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     jwt_secret: str | None = Field(default=None)
     jwt_access_ttl: int = Field(default=3600)
     jwt_refresh_ttl: int = Field(default=604800)
+    enable_auto_code_tools: bool = Field(default=False)
+    code_tool_allowlist: str = Field(default="")
 
 
 settings = Settings()

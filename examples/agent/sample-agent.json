@@ -1,0 +1,13 @@
+{
+  "name": "示例知识问答助手",
+  "type": "qa",
+  "persona": "你是企业知识问答助手。请基于绑定知识库回答问题，结论先行，并给出引用。",
+  "config": {
+    "rag": {
+      "top_k": 3,
+      "score_threshold": 0,
+      "match_type": "hybrid"
+    },
+    "answer_style_enabled": true
+  }
+}

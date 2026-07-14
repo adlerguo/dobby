@@ -634,6 +634,21 @@ async def run_tool_loop(
         db.add(trace)
         await db.flush()
         started = time.perf_counter()
+        if is_code_tool(tool) and not is_code_tool_allowed(tool):
+            output = RuntimeToolCallOut(
+                tool_id=tool.id,
+                tool_name=tool.name,
+                input=call.input,
+                output={"error": "auto_code_tool_disabled", "detail": "代码类工具默认关闭，请在后端开启白名单后再执行。"},
+                status="failed",
+            )
+            trace.status = "failed"
+            trace.output = output.model_dump(mode="json")
+            trace.latency_ms = int((time.perf_counter() - started) * 1000)
+            await db.flush()
+            results.append(output)
+            continue
+
         output = await run_tool(db, tenant_id=tenant_id, tool_id=tool.id, input=call.input)
         if output is None:
             trace.status = "failed"
@@ -678,6 +693,19 @@ def parse_tool_calls(text: str) -> list[RuntimeToolCallIn]:
             )
         )
     return parsed
+
+
+def is_code_tool(tool: Tool) -> bool:
+    config = tool.config or {}
+    builtin = str(config.get("builtin") or "").lower()
+    return tool.type == "code" or builtin in {"code", "python", "shell", "sandbox"}
+
+
+def is_code_tool_allowed(tool: Tool) -> bool:
+    if settings.enable_auto_code_tools:
+        return True
+    allowlist = {item.strip() for item in settings.code_tool_allowlist.split(",") if item.strip()}
+    return tool.name in allowlist or str(tool.id) in allowlist
 
 
 def auto_tool_calls(agent: Agent, context: ContextBuildOut, query: str) -> list[RuntimeToolCallIn]:

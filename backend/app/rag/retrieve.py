@@ -80,7 +80,12 @@ async def retrieve_chunks(
             chunk_id=candidate.id,
             doc_id=candidate.doc_id,
             doc_name=candidate.doc_name,
+            seq=candidate.seq,
+            content_length=len(candidate.content),
             score=hybrid_score(candidate),
+            vector_score=candidate.vector_score,
+            text_score=candidate.text_score,
+            match_channels=match_channels(candidate),
             snippet=make_snippet(candidate.content, query),
         )
         for candidate in merged

@@ -118,7 +118,12 @@ class CitationOut(BaseModel):
     chunk_id: UUID
     doc_id: UUID
     doc_name: str
+    seq: int | None = None
+    content_length: int
     score: float
+    vector_score: float | None = None
+    text_score: float | None = None
+    match_channels: list[Literal["vector", "keyword"]]
     snippet: str
 
 
