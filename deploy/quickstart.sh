@@ -26,7 +26,7 @@ docker compose exec -T backend python -m app.scripts.seed_model_catalog
 
 if [[ "${SEED_DEMO_MODE:-}" =~ ^(1|true|TRUE|yes|YES)$ ]]; then
   echo "SEED_DEMO_MODE=true，写入显式演示数据..."
-  docker compose exec -T backend python -m app.scripts.seed_examples
+  docker compose exec -T -e SEED_DEMO_MODE="${SEED_DEMO_MODE}" backend python -m app.scripts.seed_examples
 else
   echo "未开启 SEED_DEMO_MODE：跳过 mock 演示数据，默认引导配置真实模型。"
 fi
