@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     upstream_read_timeout: float = Field(default=60.0)
     upstream_write_timeout: float = Field(default=10.0)
     upstream_pool_timeout: float = Field(default=5.0)
+    public_app_rate_limit_per_minute: int = Field(default=60)
+    public_app_daily_request_quota: int = Field(default=1000)
+    public_app_daily_token_quota: int = Field(default=100_000)
+    public_app_daily_cost_quota: float = Field(default=0.0)
 
 
 settings = Settings()

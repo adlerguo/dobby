@@ -34,6 +34,7 @@ class AppApiKeyCreate(BaseModel):
 
     name: str = Field(default="默认 API Key", min_length=1)
     scopes: list[str] = Field(default_factory=lambda: ["agent:invoke"])
+    config: dict[str, Any] = Field(default_factory=dict)
     expires_at: datetime | None = None
 
 
@@ -44,6 +45,7 @@ class AppApiKeyOut(BaseModel):
     name: str
     key_prefix: str
     scopes: list[str]
+    config: dict[str, Any]
     status: str
     expires_at: datetime | None
     created_by: UUID | None

@@ -21,6 +21,7 @@ class AppApiKeyContext:
     agent_id: UUID
     key_id: UUID
     user_id: UUID
+    config: dict
 
 
 async def get_app_api_key_context(
@@ -57,6 +58,7 @@ async def get_app_api_key_context(
         agent_id=app.agent_id,
         key_id=key.id,
         user_id=user_id,
+        config=key.config or {},
     )
 
 

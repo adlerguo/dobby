@@ -85,6 +85,7 @@ async def create_app_api_key(
         key_hash=hash_api_key(raw_key),
         key_prefix=mask_api_key(raw_key),
         scopes=payload.scopes,
+        config=payload.config,
         status="active",
         expires_at=payload.expires_at,
         created_by=user_id,

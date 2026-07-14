@@ -67,6 +67,11 @@ services:
       CODE_TOOL_ALLOWLIST: ${CODE_TOOL_ALLOWLIST:-}
       # Trusted external hosts for HTTP tools; keep empty unless a domain is explicitly approved.
       HTTP_TOOL_ALLOWED_HOSTS: ${HTTP_TOOL_ALLOWED_HOSTS:-}
+      # Public app API key default rate limit and daily quotas; 0 disables a limit.
+      PUBLIC_APP_RATE_LIMIT_PER_MINUTE: ${PUBLIC_APP_RATE_LIMIT_PER_MINUTE:-60}
+      PUBLIC_APP_DAILY_REQUEST_QUOTA: ${PUBLIC_APP_DAILY_REQUEST_QUOTA:-1000}
+      PUBLIC_APP_DAILY_TOKEN_QUOTA: ${PUBLIC_APP_DAILY_TOKEN_QUOTA:-100000}
+      PUBLIC_APP_DAILY_COST_QUOTA: ${PUBLIC_APP_DAILY_COST_QUOTA:-0}
     volumes:
       - app_secrets:/data/secrets
     ports:

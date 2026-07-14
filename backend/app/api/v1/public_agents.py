@@ -2,10 +2,13 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.api_key_auth import AppApiKeyContext, get_app_api_key_context
 from app.core.database import get_db
+from app.core.public_limits import enforce_public_key_limits, record_public_key_usage
+from app.core.redis import get_redis
 from app.models import AppApiKey, UsageRecord
 from app.orchestrator import dispatch_single_agent
 from app.schemas.agent_run import AgentRunIn
@@ -20,10 +23,12 @@ async def public_app_chat_api(
     payload: PublicChatIn,
     auth: AppApiKeyContext = Depends(get_app_api_key_context),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> PublicChatOut:
     if payload.stream:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="stream_not_supported")
 
+    await enforce_public_key_limits(redis, auth)
     try:
         result = await dispatch_single_agent(
             db,
@@ -50,6 +55,7 @@ async def public_app_chat_api(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable")
 
     await mark_key_used_and_record_usage(db, auth=auth, usage=result.usage)
+    await record_public_key_usage(redis, auth, result.usage)
     return PublicChatOut(
         answer=result.answer,
         citations=result.citations,

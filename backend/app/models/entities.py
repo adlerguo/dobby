@@ -348,6 +348,7 @@ class AppApiKey(IdMixin, CreatedAtMixin, TenantMixin, Base):
     key_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     key_prefix: Mapped[str] = mapped_column(Text, nullable=False)
     scopes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
