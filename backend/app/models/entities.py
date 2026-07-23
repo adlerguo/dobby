@@ -20,7 +20,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, CreatedAtMixin, IdMixin, JsonDict, TenantMixin, TimestampMixin
+from app.models.base import (
+    Base,
+    CreatedAtMixin,
+    IdMixin,
+    JsonDict,
+    TenantMixin,
+    TimestampMixin,
+)
 
 
 class Tenant(IdMixin, TimestampMixin, Base):
@@ -28,13 +35,17 @@ class Tenant(IdMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(Text, nullable=False)
     code: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'active'")
+    )
 
 
 class User(IdMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
-    tenant_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
     username: Mapped[str] = mapped_column(Text, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text)
@@ -42,7 +53,12 @@ class User(IdMixin, TimestampMixin, Base):
     status: Mapped[str | None] = mapped_column(Text, server_default=text("'active'"))
     __table_args__ = (
         UniqueConstraint("tenant_id", "username"),
-        Index("uq_users_tenant_username_ci", "tenant_id", func.lower(func.btrim(username)), unique=True),
+        Index(
+            "uq_users_tenant_username_ci",
+            "tenant_id",
+            func.lower(func.btrim(username)),
+            unique=True,
+        ),
     )
 
 
@@ -50,7 +66,9 @@ class Role(IdMixin, Base):
     __tablename__ = "roles"
     __table_args__ = (UniqueConstraint("tenant_id", "code"),)
 
-    tenant_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     code: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -66,14 +84,20 @@ class Permission(IdMixin, Base):
 class UserRole(Base):
     __tablename__ = "user_roles"
 
-    user_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
-    role_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("roles.id"), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    role_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("roles.id"), primary_key=True
+    )
 
 
 class RolePermission(Base):
     __tablename__ = "role_permissions"
 
-    role_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("roles.id"), primary_key=True)
+    role_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("roles.id"), primary_key=True
+    )
     permission_id: Mapped[UUID] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("permissions.id"),
@@ -88,8 +112,12 @@ class KnowledgeBase(IdMixin, TimestampMixin, TenantMixin, Base):
     type: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     config: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
-    embedding_model: Mapped[str | None] = mapped_column(Text, server_default=text("'text-embedding-3-small'"))
-    embedding_dim: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1536"))
+    embedding_model: Mapped[str | None] = mapped_column(
+        Text, server_default=text("'text-embedding-3-small'")
+    )
+    embedding_dim: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1536")
+    )
     status: Mapped[str | None] = mapped_column(Text, server_default=text("'active'"))
     created_by: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
     __table_args__ = (
@@ -106,15 +134,25 @@ class KnowledgeBase(IdMixin, TimestampMixin, TenantMixin, Base):
 class Document(IdMixin, CreatedAtMixin, TenantMixin, Base):
     __tablename__ = "documents"
 
-    kb_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=False)
+    kb_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=False
+    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     source_uri: Mapped[str | None] = mapped_column(Text)
     mime: Mapped[str | None] = mapped_column(Text)
     size: Mapped[int | None] = mapped_column(BigInteger)
-    parse_status: Mapped[str | None] = mapped_column(Text, server_default=text("'pending'"))
+    parse_status: Mapped[str | None] = mapped_column(
+        Text, server_default=text("'pending'")
+    )
     meta: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     __table_args__ = (
-        Index("uq_documents_tenant_kb_name_ci", "tenant_id", "kb_id", func.lower(func.btrim(name)), unique=True),
+        Index(
+            "uq_documents_tenant_kb_name_ci",
+            "tenant_id",
+            "kb_id",
+            func.lower(func.btrim(name)),
+            unique=True,
+        ),
     )
 
 
@@ -122,7 +160,12 @@ class Chunk(IdMixin, CreatedAtMixin, TenantMixin, Base):
     __tablename__ = "chunks"
     __table_args__ = (
         Index("ix_chunks_kb_id", "kb_id"),
-        Index("ix_chunks_embedding", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
+        Index(
+            "ix_chunks_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
         Index(
             "chunks_content_fts",
             func.to_tsvector("simple", text("content")),
@@ -131,7 +174,9 @@ class Chunk(IdMixin, CreatedAtMixin, TenantMixin, Base):
     )
 
     kb_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    doc_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    doc_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False
+    )
     seq: Mapped[int | None] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tokens: Mapped[int | None] = mapped_column(Integer)
@@ -157,7 +202,9 @@ class Chunk1024(IdMixin, CreatedAtMixin, TenantMixin, Base):
     )
 
     kb_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    doc_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    doc_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False
+    )
     seq: Mapped[int | None] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tokens: Mapped[int | None] = mapped_column(Integer)
@@ -177,7 +224,9 @@ class Chunk3072(IdMixin, CreatedAtMixin, TenantMixin, Base):
     )
 
     kb_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    doc_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    doc_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("documents.id"), nullable=False
+    )
     seq: Mapped[int | None] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tokens: Mapped[int | None] = mapped_column(Integer)
@@ -190,7 +239,9 @@ class AgentTemplate(IdMixin, Base):
 
     type: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    default_config: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    default_config: Mapped[JsonDict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
     builtin: Mapped[bool | None] = mapped_column(Boolean, server_default=text("true"))
 
 
@@ -199,7 +250,9 @@ class Agent(IdMixin, TimestampMixin, TenantMixin, Base):
 
     name: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(Text, nullable=False)
-    template_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("agent_templates.id"))
+    template_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("agent_templates.id")
+    )
     persona: Mapped[str | None] = mapped_column(Text)
     config: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     model_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
@@ -238,15 +291,23 @@ class Tool(IdMixin, TenantMixin, Base):
 class AgentTool(Base):
     __tablename__ = "agent_tools"
 
-    agent_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("agents.id"), primary_key=True)
-    tool_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("tools.id"), primary_key=True)
+    agent_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("agents.id"), primary_key=True
+    )
+    tool_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("tools.id"), primary_key=True
+    )
 
 
 class AgentKb(Base):
     __tablename__ = "agent_kbs"
 
-    agent_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("agents.id"), primary_key=True)
-    kb_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("knowledge_bases.id"), primary_key=True)
+    agent_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("agents.id"), primary_key=True
+    )
+    kb_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("knowledge_bases.id"), primary_key=True
+    )
 
 
 class Model(IdMixin, Base):
@@ -258,20 +319,32 @@ class Model(IdMixin, Base):
     display_name: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool | None] = mapped_column(Boolean, server_default=text("true"))
-    provider_config: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
-    import_source: Mapped[str | None] = mapped_column(Text, server_default=text("'external'"))
+    provider_config: Mapped[JsonDict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    import_source: Mapped[str | None] = mapped_column(
+        Text, server_default=text("'external'")
+    )
     model_icon_path: Mapped[str | None] = mapped_column(Text)
     publish_date: Mapped[str | None] = mapped_column(Text)
-    scope_type: Mapped[str | None] = mapped_column(Text, server_default=text("'tenant'"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    scope_type: Mapped[str | None] = mapped_column(
+        Text, server_default=text("'tenant'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ModelChannel(IdMixin, CreatedAtMixin, Base):
     __tablename__ = "model_channels"
 
     tenant_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
-    model_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("models.id"))
+    model_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("models.id")
+    )
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
     api_key_enc: Mapped[str] = mapped_column(Text, nullable=False)
     weight: Mapped[int | None] = mapped_column(Integer, server_default=text("1"))
@@ -294,9 +367,15 @@ class ModelCatalog(IdMixin, TimestampMixin, Base):
     model_type: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     context_window: Mapped[int | None] = mapped_column(Integer)
-    supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    supports_tools: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    supports_vision: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    supports_streaming: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    supports_tools: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    supports_vision: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     default_base_url: Mapped[str] = mapped_column(Text, nullable=False)
     protocol: Mapped[str] = mapped_column(Text, nullable=False)
     recommended_parameters: Mapped[JsonDict] = mapped_column(
@@ -305,10 +384,16 @@ class ModelCatalog(IdMixin, TimestampMixin, Base):
         server_default=text("'{}'::jsonb"),
     )
     official_url: Mapped[str | None] = mapped_column(Text)
-    pricing: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    pricing: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     icon: Mapped[str | None] = mapped_column(Text)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("100"))
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("100")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
 
 
 class ApiKey(IdMixin, Base):
@@ -328,11 +413,19 @@ class PublishedApp(IdMixin, TimestampMixin, TenantMixin, Base):
         Index("ix_published_apps_agent_id", "agent_id"),
     )
 
-    agent_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
+    agent_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("agents.id"), nullable=False
+    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'published'"))
-    publish_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'api'"))
-    config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'published'")
+    )
+    publish_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'api'")
+    )
+    config: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     created_by: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
 
@@ -343,13 +436,21 @@ class AppApiKey(IdMixin, CreatedAtMixin, TenantMixin, Base):
         Index("ix_app_api_keys_status", "status"),
     )
 
-    app_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("published_apps.id"), nullable=False)
+    app_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("published_apps.id"), nullable=False
+    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     key_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     key_prefix: Mapped[str] = mapped_column(Text, nullable=False)
-    scopes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
-    config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    scopes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    config: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'active'")
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -367,16 +468,22 @@ class Conversation(IdMixin, CreatedAtMixin, TenantMixin, Base):
 class Message(IdMixin, CreatedAtMixin, TenantMixin, Base):
     __tablename__ = "messages"
 
-    conversation_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("conversations.id"))
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("conversations.id")
+    )
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str | None] = mapped_column(Text)
     tokens: Mapped[int | None] = mapped_column(Integer)
-    citations: Mapped[list[JsonDict]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    citations: Mapped[list[JsonDict]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
 
 
 class UsageRecord(IdMixin, CreatedAtMixin, TenantMixin, Base):
     __tablename__ = "usage_records"
-    __table_args__ = (Index("ix_usage_records_tenant_id_created_at", "tenant_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_usage_records_tenant_id_created_at", "tenant_id", "created_at"),
+    )
 
     channel_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
     model_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
@@ -386,7 +493,9 @@ class UsageRecord(IdMixin, CreatedAtMixin, TenantMixin, Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
-    cache_hit: Mapped[bool | None] = mapped_column(Boolean, server_default=text("false"))
+    cache_hit: Mapped[bool | None] = mapped_column(
+        Boolean, server_default=text("false")
+    )
 
 
 class Workspace(IdMixin, CreatedAtMixin, TenantMixin, Base):
@@ -396,14 +505,21 @@ class Workspace(IdMixin, CreatedAtMixin, TenantMixin, Base):
     layout: Mapped[JsonDict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     created_by: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
     __table_args__ = (
-        Index("uq_workspaces_tenant_name_ci", "tenant_id", func.lower(func.btrim(name)), unique=True),
+        Index(
+            "uq_workspaces_tenant_name_ci",
+            "tenant_id",
+            func.lower(func.btrim(name)),
+            unique=True,
+        ),
     )
 
 
 class WorkspaceResource(IdMixin, Base):
     __tablename__ = "workspace_resources"
 
-    workspace_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("workspaces.id"))
+    workspace_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("workspaces.id")
+    )
     resource_type: Mapped[str | None] = mapped_column(Text)
     resource_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
 

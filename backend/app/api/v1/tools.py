@@ -6,8 +6,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_current_auth, require_perm
 from app.core.database import get_db
 from app.repositories import ToolRepository
-from app.schemas import ToolCreate, ToolOut, ToolRunIn, ToolRunOut, ToolUpdate
-from app.services import create_tool, disable_tool, run_tool, update_tool
+from app.schemas import (
+    ToolBindIn,
+    ToolBindOut,
+    ToolCreate,
+    ToolDraftIn,
+    ToolDraftOut,
+    ToolOut,
+    ToolRunIn,
+    ToolRunOut,
+    ToolUpdate,
+)
+from app.services import (
+    bind_tool_to_agents,
+    create_tool,
+    disable_tool,
+    draft_tool,
+    run_tool,
+    update_tool,
+)
 from app.services.audit_service import write_audit
 
 router = APIRouter(prefix="/tools", tags=["tools"])
@@ -31,7 +48,12 @@ async def list_tools(
     return list(await repo.list())
 
 
-@router.post("", response_model=ToolOut, status_code=status.HTTP_201_CREATED, summary="Create tool")
+@router.post(
+    "",
+    response_model=ToolOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create tool",
+)
 async def create_tool_api(
     payload: ToolCreate,
     request: Request,
@@ -55,6 +77,17 @@ async def create_tool_api(
     return tool
 
 
+@router.post(
+    "/draft", response_model=ToolDraftOut, summary="Draft tool from description"
+)
+async def draft_tool_api(
+    payload: ToolDraftIn,
+    auth: AuthContext = Depends(require_perm("agent:publish")),
+    db: AsyncSession = Depends(get_db),
+) -> ToolDraftOut:
+    return await draft_tool(db, tenant_id=auth.tenant_id, payload=payload)
+
+
 @router.get("/{tool_id}", response_model=ToolOut, summary="Get tool")
 async def get_tool(
     tool_id: UUID,
@@ -64,8 +97,43 @@ async def get_tool(
     repo = ToolRepository(db, auth.tenant_id)
     tool = await repo.get_by_id(tool_id)
     if tool is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found"
+        )
     return tool
+
+
+@router.post(
+    "/{tool_id}/bind", response_model=ToolBindOut, summary="Bind tool to agents"
+)
+async def bind_tool_api(
+    tool_id: UUID,
+    payload: ToolBindIn,
+    request: Request,
+    auth: AuthContext = Depends(require_perm("agent:publish")),
+    db: AsyncSession = Depends(get_db),
+) -> ToolBindOut:
+    try:
+        agent_ids = await bind_tool_to_agents(
+            db, tenant_id=auth.tenant_id, tool_id=tool_id, agent_ids=payload.agent_ids
+        )
+    except ValueError as exc:
+        raise tool_error(exc) from exc
+    if agent_ids is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found"
+        )
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="tool.bind",
+        resource_type="tool",
+        resource_id=tool_id,
+        detail={"agent_ids": [str(agent_id) for agent_id in agent_ids]},
+        request=request,
+    )
+    return ToolBindOut(tool_id=tool_id, agent_ids=agent_ids)
 
 
 @router.patch("/{tool_id}", response_model=ToolOut, summary="Update tool")
@@ -77,11 +145,15 @@ async def update_tool_api(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        tool = await update_tool(db, tenant_id=auth.tenant_id, tool_id=tool_id, payload=payload)
+        tool = await update_tool(
+            db, tenant_id=auth.tenant_id, tool_id=tool_id, payload=payload
+        )
     except ValueError as exc:
         raise tool_error(exc) from exc
     if tool is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -95,7 +167,9 @@ async def update_tool_api(
     return tool
 
 
-@router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Disable tool")
+@router.delete(
+    "/{tool_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Disable tool"
+)
 async def delete_tool_api(
     tool_id: UUID,
     request: Request,
@@ -104,7 +178,9 @@ async def delete_tool_api(
 ) -> None:
     deleted = await disable_tool(db, tenant_id=auth.tenant_id, tool_id=tool_id)
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -123,9 +199,13 @@ async def run_tool_api(
     auth: AuthContext = Depends(get_current_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ToolRunOut:
-    result = await run_tool(db, tenant_id=auth.tenant_id, tool_id=tool_id, input=payload.input)
+    result = await run_tool(
+        db, tenant_id=auth.tenant_id, tool_id=tool_id, input=payload.input
+    )
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="tool_not_found"
+        )
     if result.output.get("error") == "forbidden":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=result.output)
     return result

@@ -22,7 +22,13 @@ from app.services.dashboard_service import (
     build_technical_dashboard,
     build_trace_detail,
 )
-from app.services.kb_service import archive_kb, create_kb, delete_document, update_kb, upload_document
+from app.services.kb_service import (
+    archive_kb,
+    create_kb,
+    delete_document,
+    update_kb,
+    upload_document,
+)
 from app.services.model_service import (
     create_model_hub_model,
     get_model_hub_model,
@@ -31,7 +37,14 @@ from app.services.model_service import (
     set_model_hub_status,
     update_model_hub_model,
 )
-from app.services.tool_service import create_tool, disable_tool, run_tool, update_tool
+from app.services.tool_service import (
+    bind_tool_to_agents,
+    create_tool,
+    disable_tool,
+    draft_tool,
+    run_tool,
+    update_tool,
+)
 from app.services.workspace_service import (
     attach_workspace_resource,
     create_workspace,
@@ -70,7 +83,9 @@ __all__ = [
     "create_model_hub_model",
     "set_model_hub_status",
     "create_tool",
+    "bind_tool_to_agents",
     "disable_tool",
+    "draft_tool",
     "run_tool",
     "publish_agent",
     "update_agent",

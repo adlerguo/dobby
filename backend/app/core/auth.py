@@ -59,7 +59,9 @@ async def get_current_auth(
     db: AsyncSession = Depends(get_db),
 ) -> AuthContext:
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not_authenticated")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="not_authenticated"
+        )
 
     try:
         payload = decode_jwt(credentials.credentials, secret=settings.jwt_secret)
@@ -68,14 +70,25 @@ async def get_current_auth(
         user_id = UUID(payload["user_id"])
         tenant_id = UUID(payload["tenant_id"])
     except (KeyError, ValueError):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token") from None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token"
+        ) from None
 
     user = await db.get(User, user_id)
     tenant = await db.get(Tenant, tenant_id)
-    if user is None or tenant is None or user.status != "active" or tenant.status != "active":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="inactive_identity")
+    if (
+        user is None
+        or tenant is None
+        or user.status != "active"
+        or tenant.status != "active"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="inactive_identity"
+        )
     if user.tenant_id != tenant.id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="tenant_mismatch")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="tenant_mismatch"
+        )
 
     roles = await get_role_codes(db, user.id)
     permissions = await get_permission_codes(db, user.id)
@@ -94,6 +107,8 @@ def require_perm(permission_code: str):
     async def dependency(auth: AuthContext = Depends(get_current_auth)) -> AuthContext:
         if "super_admin" in auth.roles or permission_code in auth.permissions:
             return auth
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="permission_denied")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="permission_denied"
+        )
 
     return dependency

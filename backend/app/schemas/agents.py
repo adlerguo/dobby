@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field
 AGENT_TYPES = {
     "qa",
     "nl2data",
+    "paper_explainer",
+    "data_detective",
+    "mock_interviewer",
+    "writing_muse",
+    "study_planner",
+    "brand_namer",
+    "prompt_engineer",
     "doc_gen",
     "doc_check",
     "analysis",
@@ -38,7 +45,9 @@ class AgentCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
     name: str = Field(min_length=1)
-    type: str = Field(pattern=r"^(qa|nl2data|doc_gen|doc_check|analysis|file_parse|extract|file_diff|recommend|retrieve|custom|workflow_approval|form_intake|policy_interpret|task_planner|ops_assistant)$")
+    type: str = Field(
+        pattern=r"^(qa|nl2data|paper_explainer|data_detective|mock_interviewer|writing_muse|study_planner|brand_namer|prompt_engineer|doc_gen|doc_check|analysis|file_parse|extract|file_diff|recommend|retrieve|custom|workflow_approval|form_intake|policy_interpret|task_planner|ops_assistant)$"
+    )
     template_id: UUID | None = None
     persona: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)
@@ -57,7 +66,9 @@ class AgentUpdate(BaseModel):
     model_id: UUID | None = None
     kb_ids: list[UUID] | None = None
     tool_ids: list[UUID] | None = None
-    status: str | None = Field(default=None, pattern=r"^(active|disabled|draft|archived)$")
+    status: str | None = Field(
+        default=None, pattern=r"^(active|disabled|draft|archived)$"
+    )
 
 
 class AgentOut(BaseModel):

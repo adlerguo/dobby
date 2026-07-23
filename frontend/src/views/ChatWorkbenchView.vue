@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
+import { useRoute } from 'vue-router'
 
 import { API_BASE, apiFetch } from '../api/client'
 import EmptyState from '../components/common/EmptyState.vue'
@@ -8,6 +9,7 @@ import PageHeader from '../components/common/PageHeader.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import StatusTag from '../components/common/StatusTag.vue'
 import type { Agent, Citation, KnowledgeChunk, Workspace } from '../api/types'
+import { parseSseEvent } from '../utils/runtime'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -21,6 +23,7 @@ interface TraceCard {
 }
 
 const agents = ref<Agent[]>([])
+const route = useRoute()
 const workspaces = ref<Workspace[]>([])
 const agentId = ref('')
 const workspaceId = ref('')
@@ -57,28 +60,24 @@ async function loadOptions() {
   const [agentRows, workspaceRows] = await Promise.all([apiFetch<Agent[]>('/agents'), apiFetch<Workspace[]>('/workspaces')])
   agents.value = agentRows.filter((agent) => agent.status === 'active')
   workspaces.value = workspaceRows
-  agentId.value = agentId.value || agents.value[0]?.id || ''
+  const queryAgentId = typeof route.query.agent_id === 'string' ? route.query.agent_id : ''
+  agentId.value = queryAgentId && agents.value.some((agent) => agent.id === queryAgentId) ? queryAgentId : agentId.value || agents.value[0]?.id || ''
 }
 
-function parseSseEvent(raw: string) {
-  const event = { event: 'message', data: {} as any }
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event:')) event.event = line.slice(6).trim()
-    if (line.startsWith('data:')) {
-      try {
-        event.data = JSON.parse(line.slice(5).trim())
-      } catch {
-        event.data = {}
-      }
+watch(
+  () => route.query.agent_id,
+  (value) => {
+    const queryAgentId = typeof value === 'string' ? value : ''
+    if (queryAgentId && agents.value.some((agent) => agent.id === queryAgentId)) {
+      agentId.value = queryAgentId
     }
-  }
-  return event
-}
+  },
+)
 
 function friendlyChatError(detail: string) {
-  if (detail === 'no_active_model_channel') return '请先在模型中心配置模型 API 并测试连通'
-  if (detail.startsWith('provider_http_')) return `模型渠道调用失败：${detail}，请检查 API Key、额度或供应商地址`
-  if (detail === 'maas_call_failed') return '模型网关调用失败，请检查模型渠道配置'
+  if (detail === 'no_active_model_channel') return '请先在模型中心完成模型接入，并启用至少一个模型。'
+  if (detail.startsWith('provider_http_')) return '模型服务暂时无法访问，请检查访问密钥、额度或供应商服务状态。'
+  if (detail === 'maas_call_failed') return '模型服务调用失败，请检查模型接入配置。'
   return detail
 }
 
@@ -93,7 +92,7 @@ async function sendMessage() {
   citations.value = []
   runMeta.value = null
   traceCards.value = [
-    { title: '思考', status: 'running', detail: '正在判断问题是否需要检索知识库或调用工具。' },
+    { title: '理解问题', status: 'running', detail: '正在判断问题是否需要检索知识库或使用工具能力。' },
   ]
   streaming.value = true
 
@@ -149,7 +148,7 @@ async function sendMessage() {
           traceCards.value.push({
             title: '生成回答',
             status: 'success',
-            detail: `trace_id ${event.data.trace_id || '无'} · Token ${event.data.usage?.total_tokens || 0}`,
+            detail: `本次用量 ${event.data.usage?.total_tokens || 0}`,
           })
         }
         if (event.event === 'error') {
@@ -219,7 +218,7 @@ onMounted(loadOptions)
 
 <template>
   <section class="chat-workbench-page">
-    <PageHeader title="调试对话" description="选择智能体和工作空间，验证回答、引用和运行信息。">
+    <PageHeader title="对话验证" description="选择智能体并输入真实问题，检查回答内容、引用和运行过程。">
       <template #actions>
         <el-button @click="loadOptions">刷新选项</el-button>
       </template>
@@ -227,7 +226,7 @@ onMounted(loadOptions)
 
     <div class="grid two">
       <section class="panel-card">
-        <SectionHeader title="智能体对话" description="发送问题，观察模型回答和引用返回。" />
+        <SectionHeader title="智能体对话" description="发送业务问题，查看智能体回答及引用来源。" />
         <div class="grid two">
           <el-select v-model="agentId" placeholder="请选择智能体">
             <el-option v-for="agent in agents" :key="agent.id" :label="agent.name" :value="agent.id" />
@@ -238,7 +237,7 @@ onMounted(loadOptions)
         </div>
         <div class="chat-box mt">
           <div class="messages">
-            <EmptyState v-if="messages.length === 0" title="还没有对话" description="选择智能体后即可发送问题。若没有可用模型，请先在模型中心配置模型 API 并测试连通。" />
+            <EmptyState v-if="messages.length === 0" title="还没有对话" description="请选择智能体并输入业务问题；如没有可用模型，请先在模型中心完成模型接入。" />
             <div v-for="(message, index) in messages" :key="index" class="message" :class="{ user: message.role === 'user' }">
               <strong>{{ message.role === 'user' ? '我' : '智能体' }}</strong>
               <div v-if="message.role === 'user'" class="message-text">{{ message.text }}</div>
@@ -258,7 +257,7 @@ onMounted(loadOptions)
       </section>
 
       <section class="panel-card">
-        <SectionHeader title="运行轨迹与引用证据" description="查看检索、生成、引用和 trace 信息。" />
+        <SectionHeader title="运行过程与引用" description="查看知识库检索、回答生成和引用来源。" />
         <div class="stack">
           <div class="trace-card" v-for="card in traceCards" :key="card.title + card.detail">
             <strong><StatusTag :status="card.status" :label="card.title" /></strong>
@@ -279,7 +278,7 @@ onMounted(loadOptions)
           <article v-for="(citation, index) in citations" :key="citation.chunk_id || index" class="result-card">
             <div class="result-meta">
               <strong>{{ citationTitle(citation, index + 1) }}</strong>
-              <StatusTag v-if="citation.score != null" status="success" :label="`RRF ${formatScore(citation.score)}`" />
+              <StatusTag v-if="citation.score != null" status="success" :label="`排序分 ${formatScore(citation.score)}`" />
               <StatusTag v-if="citation.vector_score != null" status="processing" :label="`向量 ${formatScore(citation.vector_score)}`" />
               <StatusTag v-if="citation.text_score != null" status="neutral" :label="`关键词 ${formatScore(citation.text_score)}`" />
               <span class="mono-id">{{ formatChannels(citation.match_channels) }}</span>
@@ -289,7 +288,11 @@ onMounted(loadOptions)
             <el-button size="small" @click="openCitation(citation)">定位来源 [{{ index + 1 }}]</el-button>
           </article>
           <article v-if="runMeta" class="result-card">
-            <pre>{{ JSON.stringify(runMeta, null, 2) }}</pre>
+            <el-collapse>
+              <el-collapse-item title="原始数据（开发者）" name="raw-data">
+                <pre>{{ JSON.stringify(runMeta, null, 2) }}</pre>
+              </el-collapse-item>
+            </el-collapse>
           </article>
         </div>
       </section>
@@ -303,7 +306,7 @@ onMounted(loadOptions)
           <el-descriptions-item label="综合排名分">{{ formatScore(selectedCitation.score) }}</el-descriptions-item>
           <el-descriptions-item label="向量相似度">{{ formatScore(selectedCitation.vector_score) }}</el-descriptions-item>
           <el-descriptions-item label="关键词分">{{ formatScore(selectedCitation.text_score) }}</el-descriptions-item>
-          <el-descriptions-item label="匹配通道">{{ formatChannels(selectedCitation.match_channels) }}</el-descriptions-item>
+          <el-descriptions-item label="匹配方式">{{ formatChannels(selectedCitation.match_channels) }}</el-descriptions-item>
           <el-descriptions-item label="片段 ID">{{ selectedCitation.chunk_id || '-' }}</el-descriptions-item>
           <el-descriptions-item label="文档 ID">{{ selectedCitation.doc_id || '-' }}</el-descriptions-item>
         </el-descriptions>
@@ -329,8 +332,8 @@ onMounted(loadOptions)
             </article>
             <EmptyState
               v-if="!citationContextLoading && citationContextChunks.length === 0"
-              title="无法加载切片上下文"
-              description="该引用只返回了片段摘要，暂时无法定位完整切片。"
+              title="无法查看引用上下文"
+              description="当前引用只有片段摘要。请确认文档已完成处理，或返回知识库查看资料片段。"
             />
           </div>
         </section>

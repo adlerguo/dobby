@@ -4,6 +4,9 @@ from app.core.config import settings
 from app.core.maas_auth import maas_service_headers
 
 
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+
+
 async def embed_texts(*, model: str, texts: list[str]) -> list[list[float]]:
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(

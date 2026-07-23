@@ -52,7 +52,12 @@ async def list_eval_case_api(
     return await list_eval_cases(db, tenant_id=auth.tenant_id, scene=scene)
 
 
-@router.post("/eval-cases", response_model=EvalCaseOut, status_code=status.HTTP_201_CREATED, summary="Create eval case")
+@router.post(
+    "/eval-cases",
+    response_model=EvalCaseOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create eval case",
+)
 async def create_eval_case_api(
     payload: EvalCaseCreate,
     request: Request,
@@ -73,7 +78,9 @@ async def create_eval_case_api(
     return case
 
 
-@router.get("/eval-cases/{case_id}", response_model=EvalCaseOut, summary="Get eval case")
+@router.get(
+    "/eval-cases/{case_id}", response_model=EvalCaseOut, summary="Get eval case"
+)
 async def get_eval_case_api(
     case_id: UUID,
     auth: AuthContext = Depends(require_perm("agent:publish")),
@@ -81,11 +88,15 @@ async def get_eval_case_api(
 ):
     case = await get_eval_case(db, tenant_id=auth.tenant_id, case_id=case_id)
     if case is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="eval_case_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="eval_case_not_found"
+        )
     return case
 
 
-@router.patch("/eval-cases/{case_id}", response_model=EvalCaseOut, summary="Update eval case")
+@router.patch(
+    "/eval-cases/{case_id}", response_model=EvalCaseOut, summary="Update eval case"
+)
 async def update_eval_case_api(
     case_id: UUID,
     payload: EvalCaseUpdate,
@@ -93,9 +104,13 @@ async def update_eval_case_api(
     auth: AuthContext = Depends(require_perm("agent:publish")),
     db: AsyncSession = Depends(get_db),
 ):
-    case = await update_eval_case(db, tenant_id=auth.tenant_id, case_id=case_id, payload=payload)
+    case = await update_eval_case(
+        db, tenant_id=auth.tenant_id, case_id=case_id, payload=payload
+    )
     if case is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="eval_case_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="eval_case_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -109,7 +124,11 @@ async def update_eval_case_api(
     return case
 
 
-@router.delete("/eval-cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete eval case")
+@router.delete(
+    "/eval-cases/{case_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete eval case",
+)
 async def delete_eval_case_api(
     case_id: UUID,
     request: Request,
@@ -118,7 +137,9 @@ async def delete_eval_case_api(
 ) -> None:
     deleted = await delete_eval_case(db, tenant_id=auth.tenant_id, case_id=case_id)
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="eval_case_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="eval_case_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -130,7 +151,9 @@ async def delete_eval_case_api(
     )
 
 
-@router.post("/agents/{agent_id}/eval", response_model=EvalReportOut, summary="Run agent eval")
+@router.post(
+    "/agents/{agent_id}/eval", response_model=EvalReportOut, summary="Run agent eval"
+)
 async def run_agent_eval_api(
     agent_id: UUID,
     payload: EvalRunRequest,
@@ -149,7 +172,9 @@ async def run_agent_eval_api(
     except ValueError as exc:
         raise eval_error(exc) from exc
     if report is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -157,20 +182,31 @@ async def run_agent_eval_api(
         action="agent.eval",
         resource_type="agent",
         resource_id=agent_id,
-        detail={"total": report.total, "passed": report.passed, "failed": report.failed, "pass_rate": report.pass_rate},
+        detail={
+            "total": report.total,
+            "passed": report.passed,
+            "failed": report.failed,
+            "pass_rate": report.pass_rate,
+        },
         request=request,
     )
     return report
 
 
-@router.get("/agents/{agent_id}/eval-runs", response_model=list[EvalRunOut], summary="List agent eval runs")
+@router.get(
+    "/agents/{agent_id}/eval-runs",
+    response_model=list[EvalRunOut],
+    summary="List agent eval runs",
+)
 async def list_agent_eval_runs_api(
     agent_id: UUID,
     limit: int = Query(default=20, ge=1, le=100),
     auth: AuthContext = Depends(require_perm("agent:publish")),
     db: AsyncSession = Depends(get_db),
 ) -> list[EvalRunOut]:
-    runs = await list_eval_runs(db, tenant_id=auth.tenant_id, agent_id=agent_id, limit=limit)
+    runs = await list_eval_runs(
+        db, tenant_id=auth.tenant_id, agent_id=agent_id, limit=limit
+    )
     return [eval_run_out(run) for run in runs]
 
 
@@ -187,9 +223,13 @@ async def create_agent_experience_api(
     auth: AuthContext = Depends(require_perm("agent:publish")),
     db: AsyncSession = Depends(get_db),
 ):
-    experience = await create_experience(db, tenant_id=auth.tenant_id, agent_id=agent_id, payload=payload)
+    experience = await create_experience(
+        db, tenant_id=auth.tenant_id, agent_id=agent_id, payload=payload
+    )
     if experience is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -203,7 +243,11 @@ async def create_agent_experience_api(
     return experience
 
 
-@router.get("/agents/{agent_id}/experiences", response_model=list[ExperienceOut], summary="Search agent experiences")
+@router.get(
+    "/agents/{agent_id}/experiences",
+    response_model=list[ExperienceOut],
+    summary="Search agent experiences",
+)
 async def search_agent_experiences_api(
     agent_id: UUID,
     query: str | None = Query(default=None),

@@ -3,4 +3,11 @@ from app.repositories.base import Repository, TenantRepository
 from app.repositories.kb_repository import DocumentRepository, KnowledgeBaseRepository
 from app.repositories.tool_repository import ToolRepository
 
-__all__ = ["AgentRepository", "DocumentRepository", "KnowledgeBaseRepository", "Repository", "TenantRepository", "ToolRepository"]
+__all__ = [
+    "AgentRepository",
+    "DocumentRepository",
+    "KnowledgeBaseRepository",
+    "Repository",
+    "TenantRepository",
+    "ToolRepository",
+]

@@ -13,7 +13,13 @@ from app.core.maas_auth import maas_service_headers
 from app.models import Agent, Conversation, Message, Model, RunTrace, Tool
 from app.orchestrator.context import build_agent_context, estimate_tokens
 from app.repositories import AgentRepository, ToolRepository
-from app.schemas import AgentRunIn, AgentRunOut, ContextBuildOut, RuntimeToolCallIn, RuntimeToolCallOut
+from app.schemas import (
+    AgentRunIn,
+    AgentRunOut,
+    ContextBuildOut,
+    RuntimeToolCallIn,
+    RuntimeToolCallOut,
+)
 from app.services import run_tool
 from app.services.workspace_service import get_workspace_resource_ids, load_workspace
 
@@ -42,7 +48,9 @@ async def dispatch_single_agent(
     agent_id: UUID,
     payload: AgentRunIn,
 ) -> AgentRunOut | None:
-    return await run_agent(db, tenant_id=tenant_id, user_id=user_id, agent_id=agent_id, payload=payload)
+    return await run_agent(
+        db, tenant_id=tenant_id, user_id=user_id, agent_id=agent_id, payload=payload
+    )
 
 
 async def run_agent(
@@ -67,7 +75,9 @@ async def run_agent(
         workspace_id=payload.workspace_id,
         title=payload.query,
     )
-    model = await load_llm_model(db, tenant_id=tenant_id, agent=agent, workspace_id=conversation.workspace_id)
+    model = await load_llm_model(
+        db, tenant_id=tenant_id, agent=agent, workspace_id=conversation.workspace_id
+    )
     context = await build_agent_context(
         db,
         tenant_id=tenant_id,
@@ -104,7 +114,9 @@ async def run_agent(
         status="running",
         input={
             "query": payload.query,
-            "workspace_id": str(conversation.workspace_id) if conversation.workspace_id else None,
+            "workspace_id": str(conversation.workspace_id)
+            if conversation.workspace_id
+            else None,
             "model": model.name,
             "context": {
                 "token_budget": context.token_budget,
@@ -122,7 +134,10 @@ async def run_agent(
 
     started = time.perf_counter()
     try:
-        messages = [{"role": message.role, "content": message.content} for message in context.messages]
+        messages = [
+            {"role": message.role, "content": message.content}
+            for message in context.messages
+        ]
         first_response = await call_maas_chat(
             db,
             tenant_id,
@@ -134,7 +149,9 @@ async def run_agent(
             messages,
         )
         first_answer = extract_answer(first_response)
-        requested_tool_calls = payload.tool_calls or auto_tool_calls(agent, context, payload.query)
+        requested_tool_calls = payload.tool_calls or auto_tool_calls(
+            agent, context, payload.query
+        )
 
         tool_results = await run_tool_loop(
             db,
@@ -153,7 +170,9 @@ async def run_agent(
         tool_failed = any(result.status == "failed" for result in tool_results)
         if tool_results and not tool_failed:
             messages.append({"role": "assistant", "content": first_answer})
-            messages.append({"role": "user", "content": tool_result_prompt(tool_results)})
+            messages.append(
+                {"role": "user", "content": tool_result_prompt(tool_results)}
+            )
             final_response = await call_maas_chat(
                 db,
                 tenant_id,
@@ -178,7 +197,9 @@ async def run_agent(
             role="assistant",
             content=answer,
             tokens=estimate_tokens(answer),
-            citations=[citation.model_dump(mode="json") for citation in context.citations],
+            citations=[
+                citation.model_dump(mode="json") for citation in context.citations
+            ],
         )
         db.add(assistant_message)
         root_trace.status = "failed" if tool_failed else "ok"
@@ -186,9 +207,13 @@ async def run_agent(
             "answer": answer,
             "usage": usage,
             "tool_results": [result.model_dump(mode="json") for result in tool_results],
-            "citations": [citation.model_dump(mode="json") for citation in context.citations],
+            "citations": [
+                citation.model_dump(mode="json") for citation in context.citations
+            ],
         }
-        root_trace.tokens = int((usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
+        root_trace.tokens = int(
+            (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+        )
         root_trace.latency_ms = int((time.perf_counter() - started) * 1000)
         await db.flush()
         await db.commit()
@@ -209,7 +234,9 @@ async def run_agent(
         )
     except Exception as exc:
         error = runtime_error(exc)
-        await commit_failed_root_trace(db, root_trace=root_trace, started=started, error=error)
+        await commit_failed_root_trace(
+            db, root_trace=root_trace, started=started, error=error
+        )
         raise error from exc
 
 
@@ -224,7 +251,10 @@ async def stream_agent_events(
     repo = AgentRepository(db, tenant_id)
     agent = await repo.get_by_id(agent_id)
     if agent is None or agent.status != "active":
-        yield {"event": "error", "data": OrchestratorError("agent_not_found").event_data()}
+        yield {
+            "event": "error",
+            "data": OrchestratorError("agent_not_found").event_data(),
+        }
         return
 
     conversation = await ensure_conversation(
@@ -236,7 +266,9 @@ async def stream_agent_events(
         workspace_id=payload.workspace_id,
         title=payload.query,
     )
-    model = await load_llm_model(db, tenant_id=tenant_id, agent=agent, workspace_id=conversation.workspace_id)
+    model = await load_llm_model(
+        db, tenant_id=tenant_id, agent=agent, workspace_id=conversation.workspace_id
+    )
     context = await build_agent_context(
         db,
         tenant_id=tenant_id,
@@ -251,7 +283,10 @@ async def stream_agent_events(
         match_type=payload.match_type,
     )
     if context is None:
-        yield {"event": "error", "data": OrchestratorError("agent_not_found").event_data()}
+        yield {
+            "event": "error",
+            "data": OrchestratorError("agent_not_found").event_data(),
+        }
         return
 
     user_message = Message(
@@ -274,7 +309,9 @@ async def stream_agent_events(
         status="running",
         input={
             "query": payload.query,
-            "workspace_id": str(conversation.workspace_id) if conversation.workspace_id else None,
+            "workspace_id": str(conversation.workspace_id)
+            if conversation.workspace_id
+            else None,
             "model": model.name,
             "context": {
                 "token_budget": context.token_budget,
@@ -291,7 +328,10 @@ async def stream_agent_events(
     await db.flush()
 
     started = time.perf_counter()
-    messages = [{"role": message.role, "content": message.content} for message in context.messages]
+    messages = [
+        {"role": message.role, "content": message.content}
+        for message in context.messages
+    ]
     answer_parts: list[str] = []
     usage: dict[str, Any] = {}
     citations_sent = False
@@ -309,7 +349,10 @@ async def stream_agent_events(
             if event["type"] == "delta":
                 if not citations_sent:
                     for citation in context.citations:
-                        yield {"event": "citation", "data": citation.model_dump(mode="json")}
+                        yield {
+                            "event": "citation",
+                            "data": citation.model_dump(mode="json"),
+                        }
                     citations_sent = True
                 text = event["text"]
                 answer_parts.append(text)
@@ -318,7 +361,9 @@ async def stream_agent_events(
                 usage = event["usage"]
     except Exception as exc:
         error = runtime_error(exc)
-        await commit_failed_root_trace(db, root_trace=root_trace, started=started, error=error, usage=usage)
+        await commit_failed_root_trace(
+            db, root_trace=root_trace, started=started, error=error, usage=usage
+        )
         yield {"event": "error", "data": error.event_data()}
         yield {
             "event": "done",
@@ -349,7 +394,8 @@ async def stream_agent_events(
             parent_trace_id=root_trace.id,
             context=context,
             assistant_text=answer,
-            requested_tool_calls=payload.tool_calls or auto_tool_calls(agent, context, payload.query),
+            requested_tool_calls=payload.tool_calls
+            or auto_tool_calls(agent, context, payload.query),
             max_tool_rounds=payload.max_tool_rounds,
         )
         execution_error = tool_exception_error(tool_results)
@@ -370,7 +416,9 @@ async def stream_agent_events(
                     "conversation_id": str(conversation.id),
                     "trace_id": str(root_trace.id),
                     "usage": usage,
-                    "tool_results": [tool.model_dump(mode="json") for tool in tool_results],
+                    "tool_results": [
+                        tool.model_dump(mode="json") for tool in tool_results
+                    ],
                     "citation_count": len(context.citations),
                     "status": "failed",
                 },
@@ -400,7 +448,9 @@ async def stream_agent_events(
             yield {"event": "delta", "data": {"text": "\n\n" + answer}}
         elif tool_failed:
             tool_error_answer = format_tool_failure_answer(tool_results)
-            answer = answer + "\n\n" + tool_error_answer if answer else tool_error_answer
+            answer = (
+                answer + "\n\n" + tool_error_answer if answer else tool_error_answer
+            )
             yield {"event": "delta", "data": {"text": "\n\n" + tool_error_answer}}
     except Exception as exc:
         error = runtime_error(exc)
@@ -441,9 +491,13 @@ async def stream_agent_events(
         "answer": answer,
         "usage": usage,
         "tool_results": [result.model_dump(mode="json") for result in tool_results],
-        "citations": [citation.model_dump(mode="json") for citation in context.citations],
+        "citations": [
+            citation.model_dump(mode="json") for citation in context.citations
+        ],
     }
-    root_trace.tokens = int((usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
+    root_trace.tokens = int(
+        (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+    )
     root_trace.latency_ms = int((time.perf_counter() - started) * 1000)
     await db.flush()
     await db.commit()
@@ -472,7 +526,9 @@ async def load_llm_model(
     workspace_id: UUID | None,
 ) -> Model:
     if workspace_id is not None:
-        workspace_resources = await get_workspace_resource_ids(db, tenant_id=tenant_id, workspace_id=workspace_id)
+        workspace_resources = await get_workspace_resource_ids(
+            db, tenant_id=tenant_id, workspace_id=workspace_id
+        )
         for model_id in workspace_resources["model"]:
             model = await db.get(Model, model_id)
             if model is not None and model.type == "llm":
@@ -498,17 +554,29 @@ async def ensure_conversation(
 ) -> Conversation:
     if conversation_id is not None:
         conversation = await db.get(Conversation, conversation_id)
-        if conversation is None or conversation.tenant_id != tenant_id or conversation.agent_id != agent.id:
+        if (
+            conversation is None
+            or conversation.tenant_id != tenant_id
+            or conversation.agent_id != agent.id
+        ):
             raise ValueError("conversation_not_found")
         if workspace_id is not None and conversation.workspace_id != workspace_id:
             raise ValueError("workspace_mismatch")
         return conversation
 
     if workspace_id is not None:
-        if await load_workspace(db, tenant_id=tenant_id, workspace_id=workspace_id) is None:
+        if (
+            await load_workspace(db, tenant_id=tenant_id, workspace_id=workspace_id)
+            is None
+        ):
             raise ValueError("workspace_not_found")
-        workspace_resources = await get_workspace_resource_ids(db, tenant_id=tenant_id, workspace_id=workspace_id)
-        if workspace_resources["agent"] and agent.id not in workspace_resources["agent"]:
+        workspace_resources = await get_workspace_resource_ids(
+            db, tenant_id=tenant_id, workspace_id=workspace_id
+        )
+        if (
+            workspace_resources["agent"]
+            and agent.id not in workspace_resources["agent"]
+        ):
             raise ValueError("agent_not_in_workspace")
 
     conversation = Conversation(
@@ -574,7 +642,9 @@ async def call_maas_chat(
             "finish_reason": ((data.get("choices") or [{}])[0]).get("finish_reason"),
             "usage": usage,
         }
-        trace.tokens = int((usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
+        trace.tokens = int(
+            (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+        )
         trace.latency_ms = int((time.perf_counter() - started) * 1000)
         await db.flush()
         return data
@@ -649,7 +719,10 @@ async def call_maas_chat_stream(
                         continue
                     if payload.get("error"):
                         error = payload["error"]
-                        raise OrchestratorError(error.get("code") or "maas_stream_failed", error.get("message"))
+                        raise OrchestratorError(
+                            error.get("code") or "maas_stream_failed",
+                            error.get("message"),
+                        )
                     if payload.get("usage"):
                         usage = payload["usage"]
                         yield {"type": "usage", "usage": usage}
@@ -661,7 +734,9 @@ async def call_maas_chat_stream(
                             yield {"type": "delta", "text": text}
         trace.status = "ok"
         trace.output = {"finish_reason": finish_reason, "usage": usage}
-        trace.tokens = int((usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
+        trace.tokens = int(
+            (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+        )
         trace.latency_ms = int((time.perf_counter() - started) * 1000)
         await db.flush()
     except ValueError as exc:
@@ -737,10 +812,15 @@ async def commit_failed_root_trace(
     root_trace.status = "failed"
     root_trace.output = {"error": error.code}
     if tool_results is not None:
-        root_trace.output["tool_results"] = [result.model_dump(mode="json") for result in tool_results]
+        root_trace.output["tool_results"] = [
+            result.model_dump(mode="json") for result in tool_results
+        ]
     if citations is not None:
         root_trace.output["citations"] = [
-            citation.model_dump(mode="json") if hasattr(citation, "model_dump") else citation for citation in citations
+            citation.model_dump(mode="json")
+            if hasattr(citation, "model_dump")
+            else citation
+            for citation in citations
         ]
     if usage:
         root_trace.output["usage"] = usage
@@ -749,18 +829,23 @@ async def commit_failed_root_trace(
     await db.commit()
 
 
-def tool_exception_error(tool_results: list[RuntimeToolCallOut]) -> OrchestratorError | None:
+def tool_exception_error(
+    tool_results: list[RuntimeToolCallOut],
+) -> OrchestratorError | None:
     failed = next(
         (
             result
             for result in tool_results
-            if result.status == "failed" and result.output.get("error") == "tool_execution_failed"
+            if result.status == "failed"
+            and result.output.get("error") == "tool_execution_failed"
         ),
         None,
     )
     if failed is None:
         return None
-    return OrchestratorError("tool_execution_failed", failed.output.get("detail") or "tool_execution_failed")
+    return OrchestratorError(
+        "tool_execution_failed", failed.output.get("detail") or "tool_execution_failed"
+    )
 
 
 def upstream_timeout() -> httpx.Timeout:
@@ -868,7 +953,9 @@ async def execute_bound_tool_call(
     await db.flush()
     started = time.perf_counter()
     try:
-        output = await run_tool(db, tenant_id=tenant_id, tool_id=tool.id, input=call.input)
+        output = await run_tool(
+            db, tenant_id=tenant_id, tool_id=tool.id, input=call.input
+        )
     except Exception as exc:
         result = RuntimeToolCallOut(
             tool_id=tool.id,
@@ -927,15 +1014,26 @@ def parse_tool_calls(text: str) -> list[RuntimeToolCallIn]:
     return parsed
 
 
-def auto_tool_calls(agent: Agent, context: ContextBuildOut, query: str) -> list[RuntimeToolCallIn]:
+def auto_tool_calls(
+    agent: Agent, context: ContextBuildOut, query: str
+) -> list[RuntimeToolCallIn]:
     if agent.type != "nl2data" or not context.tools:
         return []
-    tool = next((item for item in context.tools if item.name in {"text2sql", "nl2data", "12345问数"}), context.tools[0])
+    tool = next(
+        (
+            item
+            for item in context.tools
+            if item.name in {"text2sql", "nl2data", "12345问数"}
+        ),
+        context.tools[0],
+    )
     return [RuntimeToolCallIn(tool_id=tool.id, input={"question": query})]
 
 
 def extract_json_payload(text: str) -> Any | None:
-    start_candidates = [index for index in (text.find("{"), text.find("[")) if index >= 0]
+    start_candidates = [
+        index for index in (text.find("{"), text.find("[")) if index >= 0
+    ]
     if not start_candidates:
         return None
     start = min(start_candidates)
@@ -949,7 +1047,9 @@ def extract_json_payload(text: str) -> Any | None:
 
 def tool_result_prompt(results: list[RuntimeToolCallOut]) -> str:
     serialized = [result.model_dump(mode="json") for result in results]
-    return "工具执行结果如下，请基于结果给出最终回答：\n" + json.dumps(serialized, ensure_ascii=False)
+    return "工具执行结果如下，请基于结果给出最终回答：\n" + json.dumps(
+        serialized, ensure_ascii=False
+    )
 
 
 def format_nl2data_answer(results: list[RuntimeToolCallOut]) -> str:
@@ -967,7 +1067,9 @@ def format_nl2data_answer(results: list[RuntimeToolCallOut]) -> str:
     if rows:
         lines.append("结果预览:")
         for row in rows[:10]:
-            lines.append("- " + "，".join(f"{key}={value}" for key, value in row.items()))
+            lines.append(
+                "- " + "，".join(f"{key}={value}" for key, value in row.items())
+            )
     return "\n".join(lines)
 
 

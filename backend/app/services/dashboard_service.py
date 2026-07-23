@@ -1,12 +1,12 @@
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from statistics import mean
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Agent, Conversation, Message, RunTrace
+from app.models import Agent, Conversation, Message, Model, RunTrace, UsageRecord
 from app.schemas import (
     DashboardExecutiveOut,
     DashboardMetricOut,
@@ -24,17 +24,48 @@ async def build_dashboard_overview(
     view: str,
     period_days: int,
 ) -> DashboardOverviewOut:
-    snapshot = await load_observability_snapshot(db, tenant_id=tenant_id, period_days=period_days)
+    snapshot = await load_observability_snapshot(
+        db, tenant_id=tenant_id, period_days=period_days
+    )
     technical = make_technical_summary(snapshot)
     executive = make_executive_summary(snapshot)
     metrics = [
-        DashboardMetricOut(key="conversations", label="会话数", value=snapshot["conversation_count"], unit="次"),
-        DashboardMetricOut(key="agent_runs", label="智能体运行", value=snapshot["run_count"], unit="次"),
-        DashboardMetricOut(key="success_rate", label="成功率", value=technical["success_rate"], unit="%"),
-        DashboardMetricOut(key="avg_latency_ms", label="平均耗时", value=technical["avg_latency_ms"], unit="ms"),
-        DashboardMetricOut(key="total_tokens", label="Token 消耗", value=technical["total_tokens"], unit="tokens"),
-        DashboardMetricOut(key="tool_calls", label="工具调用", value=technical["tool_calls"], unit="次"),
-        DashboardMetricOut(key="cited_answers", label="带引用回答", value=executive["cited_answers"], unit="条"),
+        DashboardMetricOut(
+            key="conversations",
+            label="会话数",
+            value=snapshot["conversation_count"],
+            unit="次",
+        ),
+        DashboardMetricOut(
+            key="agent_runs", label="智能体运行", value=snapshot["run_count"], unit="次"
+        ),
+        DashboardMetricOut(
+            key="success_rate",
+            label="成功率",
+            value=technical["success_rate"],
+            unit="%",
+        ),
+        DashboardMetricOut(
+            key="avg_latency_ms",
+            label="平均耗时",
+            value=technical["avg_latency_ms"],
+            unit="ms",
+        ),
+        DashboardMetricOut(
+            key="total_tokens",
+            label="Token 消耗",
+            value=technical["total_tokens"],
+            unit="tokens",
+        ),
+        DashboardMetricOut(
+            key="tool_calls", label="工具调用", value=technical["tool_calls"], unit="次"
+        ),
+        DashboardMetricOut(
+            key="cited_answers",
+            label="带引用回答",
+            value=executive["cited_answers"],
+            unit="条",
+        ),
     ]
     return DashboardOverviewOut(
         view=view,
@@ -47,11 +78,32 @@ async def build_dashboard_overview(
     )
 
 
-async def build_technical_dashboard(db: AsyncSession, *, tenant_id: UUID, period_days: int) -> DashboardTechnicalOut:
-    snapshot = await load_observability_snapshot(db, tenant_id=tenant_id, period_days=period_days)
+async def build_technical_dashboard(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    period_days: int,
+    agent_id: UUID | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    status: str | None = None,
+    span_type: str | None = None,
+) -> DashboardTechnicalOut:
+    snapshot = await load_observability_snapshot(
+        db,
+        tenant_id=tenant_id,
+        period_days=period_days,
+        agent_id=agent_id,
+        start=start,
+        end=end,
+        status=status,
+        span_type=span_type,
+    )
     traces = snapshot["traces"]
     root_traces = snapshot["root_traces"]
-    latencies = [trace.latency_ms or 0 for trace in root_traces if trace.latency_ms is not None]
+    latencies = [
+        trace.latency_ms or 0 for trace in root_traces if trace.latency_ms is not None
+    ]
     summary = make_technical_summary(snapshot)
     return DashboardTechnicalOut(
         period_days=period_days,
@@ -66,24 +118,64 @@ async def build_technical_dashboard(db: AsyncSession, *, tenant_id: UUID, period
         },
         token_usage={
             "total": summary["total_tokens"],
-            "avg_per_run": int(summary["total_tokens"] / summary["run_count"]) if summary["run_count"] else 0,
+            "avg_per_run": int(summary["total_tokens"] / summary["run_count"])
+            if summary["run_count"]
+            else 0,
         },
+        daily=daily_series(snapshot),
+        by_agent=by_agent_series(snapshot),
+        by_model=by_model_series(snapshot),
+        by_channel=by_channel_series(snapshot),
         top_agents=top_agents(snapshot),
         recent_errors=recent_errors(snapshot),
         recent_runs=recent_runs(snapshot),
     )
 
 
-async def build_executive_dashboard(db: AsyncSession, *, tenant_id: UUID, period_days: int) -> DashboardExecutiveOut:
-    snapshot = await load_observability_snapshot(db, tenant_id=tenant_id, period_days=period_days)
+async def build_executive_dashboard(
+    db: AsyncSession, *, tenant_id: UUID, period_days: int
+) -> DashboardExecutiveOut:
+    snapshot = await load_observability_snapshot(
+        db, tenant_id=tenant_id, period_days=period_days
+    )
     executive = make_executive_summary(snapshot)
     technical = make_technical_summary(snapshot)
     scorecards = [
-        DashboardMetricOut(key="service_count", label="服务次数", value=snapshot["run_count"], unit="次", description="智能体完成的一轮服务"),
-        DashboardMetricOut(key="success_rate", label="服务稳定性", value=technical["success_rate"], unit="%", description="成功完成比例"),
-        DashboardMetricOut(key="knowledge_answers", label="知识问答", value=executive["cited_answers"], unit="条", description="带知识出处的回答"),
-        DashboardMetricOut(key="data_answers", label="智能问数", value=executive["data_answers"], unit="次", description="自动查询数据表的回答"),
-        DashboardMetricOut(key="active_agents", label="上线智能体", value=executive["active_agents"], unit="个", description="当前可用的智能体"),
+        DashboardMetricOut(
+            key="service_count",
+            label="服务次数",
+            value=snapshot["run_count"],
+            unit="次",
+            description="智能体完成的一轮服务",
+        ),
+        DashboardMetricOut(
+            key="success_rate",
+            label="服务稳定性",
+            value=technical["success_rate"],
+            unit="%",
+            description="成功完成比例",
+        ),
+        DashboardMetricOut(
+            key="knowledge_answers",
+            label="知识问答",
+            value=executive["cited_answers"],
+            unit="条",
+            description="带知识出处的回答",
+        ),
+        DashboardMetricOut(
+            key="data_answers",
+            label="智能问数",
+            value=executive["data_answers"],
+            unit="次",
+            description="自动查询数据表的回答",
+        ),
+        DashboardMetricOut(
+            key="active_agents",
+            label="上线智能体",
+            value=executive["active_agents"],
+            unit="个",
+            description="当前可用的智能体",
+        ),
     ]
     return DashboardExecutiveOut(
         period_days=period_days,
@@ -96,7 +188,9 @@ async def build_executive_dashboard(db: AsyncSession, *, tenant_id: UUID, period
     )
 
 
-async def build_trace_detail(db: AsyncSession, *, tenant_id: UUID, cid: UUID) -> TraceDetailOut | None:
+async def build_trace_detail(
+    db: AsyncSession, *, tenant_id: UUID, cid: UUID
+) -> TraceDetailOut | None:
     trace = await db.get(RunTrace, cid)
     conversation_id = cid
     root_trace_id = None
@@ -113,11 +207,17 @@ async def build_trace_detail(db: AsyncSession, *, tenant_id: UUID, cid: UUID) ->
         trace_stmt = trace_stmt.where(RunTrace.conversation_id == conversation.id)
     elif trace is not None and trace.tenant_id == tenant_id:
         root_id = root_trace_id or trace.id
-        trace_stmt = trace_stmt.where((RunTrace.id == root_id) | (RunTrace.parent_id == root_id))
+        trace_stmt = trace_stmt.where(
+            (RunTrace.id == root_id) | (RunTrace.parent_id == root_id)
+        )
     else:
         return None
 
-    traces = list((await db.execute(trace_stmt.order_by(RunTrace.created_at.asc()))).scalars().all())
+    traces = list(
+        (await db.execute(trace_stmt.order_by(RunTrace.created_at.asc())))
+        .scalars()
+        .all()
+    )
     if not traces:
         return None
     agents = await load_agents(db, tenant_id)
@@ -125,7 +225,10 @@ async def build_trace_detail(db: AsyncSession, *, tenant_id: UUID, cid: UUID) ->
     if conversation is not None:
         result = await db.execute(
             select(Message)
-            .where(Message.tenant_id == tenant_id, Message.conversation_id == conversation.id)
+            .where(
+                Message.tenant_id == tenant_id,
+                Message.conversation_id == conversation.id,
+            )
             .order_by(Message.created_at.asc())
         )
         for message in result.scalars().all():
@@ -179,53 +282,100 @@ async def build_trace_detail(db: AsyncSession, *, tenant_id: UUID, cid: UUID) ->
     )
 
 
-async def load_observability_snapshot(db: AsyncSession, *, tenant_id: UUID, period_days: int) -> dict:
-    since = datetime.now(UTC) - timedelta(days=period_days)
-    traces = list(
-        (
-            await db.execute(
-                select(RunTrace).where(RunTrace.tenant_id == tenant_id, RunTrace.created_at >= since)
-            )
-        )
-        .scalars()
-        .all()
+async def load_observability_snapshot(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    period_days: int,
+    agent_id: UUID | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    status: str | None = None,
+    span_type: str | None = None,
+) -> dict:
+    since, until = resolve_observability_range(
+        period_days=period_days, start=start, end=end
     )
-    root_traces = [trace for trace in traces if trace.span_type == "agent"]
-    conversations = list(
-        (
-            await db.execute(
-                select(Conversation).where(Conversation.tenant_id == tenant_id, Conversation.created_at >= since)
-            )
-        )
-        .scalars()
-        .all()
+    trace_stmt = select(RunTrace).where(
+        RunTrace.tenant_id == tenant_id, RunTrace.created_at >= since
     )
-    messages = list(
-        (
-            await db.execute(select(Message).where(Message.tenant_id == tenant_id, Message.created_at >= since))
-        )
-        .scalars()
-        .all()
+    conversation_stmt = select(Conversation).where(
+        Conversation.tenant_id == tenant_id, Conversation.created_at >= since
     )
+    message_stmt = select(Message).where(
+        Message.tenant_id == tenant_id, Message.created_at >= since
+    )
+    usage_stmt = select(UsageRecord).where(
+        UsageRecord.tenant_id == tenant_id, UsageRecord.created_at >= since
+    )
+    if until is not None:
+        trace_stmt = trace_stmt.where(RunTrace.created_at < until)
+        conversation_stmt = conversation_stmt.where(Conversation.created_at < until)
+        message_stmt = message_stmt.where(Message.created_at < until)
+        usage_stmt = usage_stmt.where(UsageRecord.created_at < until)
+    if agent_id is not None:
+        trace_stmt = trace_stmt.where(RunTrace.agent_id == agent_id)
+        usage_stmt = usage_stmt.where(UsageRecord.agent_id == agent_id)
+    if status:
+        trace_stmt = trace_stmt.where(RunTrace.status == status)
+    traces_all = list((await db.execute(trace_stmt)).scalars().all())
+    root_traces = [trace for trace in traces_all if trace.span_type == "agent"]
+    traces = [
+        trace for trace in traces_all if not span_type or trace.span_type == span_type
+    ]
+    conversations = list((await db.execute(conversation_stmt)).scalars().all())
+    messages = list((await db.execute(message_stmt)).scalars().all())
+    usage_records = list((await db.execute(usage_stmt)).scalars().all())
     agents = await load_agents(db, tenant_id)
+    models = await load_models(db)
     active_agents = list(
         (
-            await db.execute(select(Agent).where(Agent.tenant_id == tenant_id, Agent.status == "active"))
+            await db.execute(
+                select(Agent).where(
+                    Agent.tenant_id == tenant_id, Agent.status == "active"
+                )
+            )
         )
         .scalars()
         .all()
     )
     return {
         "since": since,
+        "until": until,
+        "period_days": period_days,
+        "agent_id": agent_id,
+        "status": status,
+        "span_type": span_type,
         "traces": traces,
+        "all_traces": traces_all,
         "root_traces": root_traces,
         "run_count": len(root_traces),
         "conversations": conversations,
         "conversation_count": len(conversations),
         "messages": messages,
+        "usage_records": usage_records,
         "agents": agents,
+        "models": models,
         "active_agents": active_agents,
     }
+
+
+def resolve_observability_range(
+    *,
+    period_days: int,
+    start: date | None = None,
+    end: date | None = None,
+) -> tuple[datetime, datetime | None]:
+    if start is not None or end is not None:
+        start_date = start or end or datetime.now(UTC).date()
+        end_date = end or start_date
+        if end_date < start_date:
+            start_date, end_date = end_date, start_date
+        since = datetime.combine(start_date, time.min, tzinfo=UTC)
+        until = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=UTC)
+        return since, until
+    since = datetime.now(UTC) - timedelta(days=period_days)
+    return since, None
 
 
 async def load_agents(db: AsyncSession, tenant_id: UUID) -> dict[UUID, str]:
@@ -233,12 +383,21 @@ async def load_agents(db: AsyncSession, tenant_id: UUID) -> dict[UUID, str]:
     return {agent.id: agent.name for agent in result.scalars().all()}
 
 
+async def load_models(db: AsyncSession) -> dict[UUID, str]:
+    result = await db.execute(select(Model))
+    return {
+        model.id: model.display_name or model.name for model in result.scalars().all()
+    }
+
+
 def make_technical_summary(snapshot: dict) -> dict:
     root_traces = snapshot["root_traces"]
     run_count = len(root_traces)
     failed_count = sum(1 for trace in root_traces if trace.status == "failed")
     success_count = run_count - failed_count
-    latencies = [trace.latency_ms or 0 for trace in root_traces if trace.latency_ms is not None]
+    latencies = [
+        trace.latency_ms or 0 for trace in root_traces if trace.latency_ms is not None
+    ]
     total_tokens = sum(trace.tokens or 0 for trace in root_traces)
     tool_calls = sum(1 for trace in snapshot["traces"] if trace.span_type == "tool")
     model_calls = sum(1 for trace in snapshot["traces"] if trace.span_type == "model")
@@ -246,7 +405,9 @@ def make_technical_summary(snapshot: dict) -> dict:
         "run_count": run_count,
         "success_count": success_count,
         "failed_count": failed_count,
-        "success_rate": round((success_count / run_count) * 100, 2) if run_count else 100.0,
+        "success_rate": round((success_count / run_count) * 100, 2)
+        if run_count
+        else 100.0,
         "avg_latency_ms": int(mean(latencies)) if latencies else 0,
         "p95_latency_ms": percentile(latencies, 95),
         "total_tokens": total_tokens,
@@ -256,7 +417,11 @@ def make_technical_summary(snapshot: dict) -> dict:
 
 
 def make_executive_summary(snapshot: dict) -> dict:
-    cited_answers = sum(1 for message in snapshot["messages"] if message.role == "assistant" and message.citations)
+    cited_answers = sum(
+        1
+        for message in snapshot["messages"]
+        if message.role == "assistant" and message.citations
+    )
     data_answers = 0
     for trace in snapshot["root_traces"]:
         output = trace.output or {}
@@ -270,7 +435,9 @@ def make_executive_summary(snapshot: dict) -> dict:
     }
 
 
-def make_highlights(snapshot: dict, technical: dict, executive: dict, *, view: str) -> list[str]:
+def make_highlights(
+    snapshot: dict, technical: dict, executive: dict, *, view: str
+) -> list[str]:
     if view == "executive":
         return [
             f"近 {period_label(snapshot)} 已完成 {technical['run_count']} 次智能体服务。",
@@ -290,10 +457,18 @@ def period_label(snapshot: dict) -> str:
 
 
 def top_agents(snapshot: dict) -> list[dict]:
-    counts = Counter(trace.agent_id for trace in snapshot["root_traces"] if trace.agent_id is not None)
+    counts = Counter(
+        trace.agent_id
+        for trace in snapshot["root_traces"]
+        if trace.agent_id is not None
+    )
     agents = snapshot["agents"]
     return [
-        {"agent_id": str(agent_id), "agent_name": agents.get(agent_id, "未知智能体"), "runs": runs}
+        {
+            "agent_id": str(agent_id),
+            "agent_name": agents.get(agent_id, "未知智能体"),
+            "runs": runs,
+        }
         for agent_id, runs in counts.most_common(8)
     ]
 
@@ -309,7 +484,125 @@ def business_mix(snapshot: dict) -> list[dict]:
         else:
             counts["通用问答"] += 1
     total = sum(counts.values()) or 1
-    return [{"name": name, "count": count, "ratio": round(count / total * 100, 2)} for name, count in counts.items()]
+    return [
+        {"name": name, "count": count, "ratio": round(count / total * 100, 2)}
+        for name, count in counts.items()
+    ]
+
+
+def daily_series(snapshot: dict) -> list[dict]:
+    roots = snapshot["root_traces"]
+    since: datetime = snapshot["since"]
+    until: datetime | None = snapshot.get("until")
+    if until is None:
+        last_date = datetime.now(UTC).date()
+    else:
+        last_date = (until - timedelta(days=1)).date()
+    current = since.date()
+    rows: list[dict] = []
+    while current <= last_date:
+        day_traces = [trace for trace in roots if trace.created_at.date() == current]
+        latencies = [
+            trace.latency_ms or 0
+            for trace in day_traces
+            if trace.latency_ms is not None
+        ]
+        run_count = len(day_traces)
+        failed_count = sum(1 for trace in day_traces if trace.status == "failed")
+        success_count = run_count - failed_count
+        rows.append(
+            {
+                "date": current.isoformat(),
+                "run_count": run_count,
+                "success_rate": round((success_count / run_count) * 100, 2)
+                if run_count
+                else 100.0,
+                "p95_ms": percentile(latencies, 95) or 0,
+                "token_total": sum(trace.tokens or 0 for trace in day_traces),
+            }
+        )
+        current += timedelta(days=1)
+    return rows
+
+
+def by_agent_series(snapshot: dict) -> list[dict]:
+    grouped: dict[UUID, list[RunTrace]] = {}
+    for trace in snapshot["root_traces"]:
+        if trace.agent_id is None:
+            continue
+        grouped.setdefault(trace.agent_id, []).append(trace)
+    agents = snapshot["agents"]
+    rows = []
+    for agent_id, traces in grouped.items():
+        run_count = len(traces)
+        failed_count = sum(1 for trace in traces if trace.status == "failed")
+        success_count = run_count - failed_count
+        rows.append(
+            {
+                "agent_id": str(agent_id),
+                "agent_name": agents.get(agent_id, "未知智能体"),
+                "run_count": run_count,
+                "success_rate": round((success_count / run_count) * 100, 2)
+                if run_count
+                else 100.0,
+            }
+        )
+    return sorted(rows, key=lambda item: item["run_count"], reverse=True)[:10]
+
+
+def by_model_series(snapshot: dict) -> list[dict]:
+    grouped: dict[UUID, list[UsageRecord]] = {}
+    for record in snapshot.get("usage_records", []):
+        if record.model_id is None:
+            continue
+        grouped.setdefault(record.model_id, []).append(record)
+
+    models = snapshot.get("models", {})
+    rows = [
+        {
+            "model_id": str(model_id),
+            "model_name": models.get(model_id, "未知模型"),
+            **usage_group_metrics(records),
+        }
+        for model_id, records in grouped.items()
+    ]
+    return sorted(
+        rows, key=lambda item: (item["call_count"], item["cost_total"]), reverse=True
+    )[:10]
+
+
+def by_channel_series(snapshot: dict) -> list[dict]:
+    grouped: dict[UUID, list[UsageRecord]] = {}
+    for record in snapshot.get("usage_records", []):
+        if record.channel_id is None:
+            continue
+        grouped.setdefault(record.channel_id, []).append(record)
+
+    rows = [
+        {
+            "channel_id": str(channel_id),
+            **usage_group_metrics(records),
+        }
+        for channel_id, records in grouped.items()
+    ]
+    return sorted(
+        rows, key=lambda item: (item["call_count"], item["cost_total"]), reverse=True
+    )[:10]
+
+
+def usage_group_metrics(records: list[UsageRecord]) -> dict:
+    latencies = [
+        record.latency_ms for record in records if record.latency_ms is not None
+    ]
+    return {
+        "call_count": len(records),
+        "token_total": sum(
+            (record.prompt_tokens or 0) + (record.completion_tokens or 0)
+            for record in records
+        ),
+        "cost_total": float(sum(record.cost or 0 for record in records)),
+        "avg_latency_ms": int(mean(latencies)) if latencies else 0,
+    }
 
 
 def recent_errors(snapshot: dict) -> list[dict]:
@@ -318,7 +611,9 @@ def recent_errors(snapshot: dict) -> list[dict]:
     return [
         {
             "trace_id": str(trace.id),
-            "conversation_id": str(trace.conversation_id) if trace.conversation_id else None,
+            "conversation_id": str(trace.conversation_id)
+            if trace.conversation_id
+            else None,
             "span_type": trace.span_type,
             "name": trace.name,
             "output": trace.output,
@@ -329,12 +624,16 @@ def recent_errors(snapshot: dict) -> list[dict]:
 
 
 def recent_runs(snapshot: dict) -> list[dict]:
-    roots = sorted(snapshot["root_traces"], key=lambda item: item.created_at, reverse=True)
+    roots = sorted(
+        snapshot["root_traces"], key=lambda item: item.created_at, reverse=True
+    )
     agents = snapshot["agents"]
     return [
         {
             "trace_id": str(trace.id),
-            "conversation_id": str(trace.conversation_id) if trace.conversation_id else None,
+            "conversation_id": str(trace.conversation_id)
+            if trace.conversation_id
+            else None,
             "agent_id": str(trace.agent_id) if trace.agent_id else None,
             "agent_name": agents.get(trace.agent_id, "未知智能体"),
             "status": trace.status,

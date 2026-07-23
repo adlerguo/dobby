@@ -76,6 +76,11 @@ services:
       - app_secrets:/data/secrets
     ports:
       - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,6 +119,11 @@ services:
       - app_secrets:/data/secrets
     ports:
       - "8100:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,6 +141,11 @@ services:
       MAX_PROCESSES: ${SANDBOX_MAX_PROCESSES:-32}
     ports:
       - "8200:8200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8200/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     # sandbox_net is internal by default. If user-executed code needs public
     # internet access, make that network non-internal and add explicit egress controls.
     networks:
@@ -141,6 +156,11 @@ services:
       context: ./frontend
     ports:
       - "18080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       backend:
         condition: service_started

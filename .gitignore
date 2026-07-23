@@ -16,3 +16,4 @@ frontend/.vite/
 backups/
 *.tar
 *.tgz
+qa/env/

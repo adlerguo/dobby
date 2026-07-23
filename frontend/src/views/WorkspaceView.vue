@@ -7,7 +7,7 @@ import type { Workspace } from '../api/types'
 const workspaces = ref<Workspace[]>([])
 const loading = ref(false)
 const creating = ref(false)
-const name = ref('Vue 工作空间')
+const name = ref('默认工作空间')
 
 async function loadWorkspaces() {
   loading.value = true
@@ -39,7 +39,7 @@ onMounted(loadWorkspaces)
     <div class="page-header">
       <div>
         <h1>工作空间</h1>
-        <p>按项目组织智能体、知识库、模型和工具。</p>
+        <p>按项目组织智能体、知识库、模型和工具能力，便于分组管理。</p>
       </div>
       <el-button @click="loadWorkspaces">刷新</el-button>
     </div>

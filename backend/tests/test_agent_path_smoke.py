@@ -75,10 +75,14 @@ def make_agent(*, agent_type: str = "assistant") -> Agent:
 
 
 def make_model() -> Model:
-    return Model(id=uuid4(), name="mock-model", provider="mock", type="llm", is_active=True)
+    return Model(
+        id=uuid4(), name="mock-model", provider="mock", type="llm", is_active=True
+    )
 
 
-def make_tool(*, tool_type: str = "builtin", name: str = "echo", config: dict | None = None) -> Tool:
+def make_tool(
+    *, tool_type: str = "builtin", name: str = "echo", config: dict | None = None
+) -> Tool:
     return Tool(
         id=uuid4(),
         tenant_id=TENANT_ID,
@@ -97,7 +101,12 @@ def make_context(agent: Agent, *, tools: list[Tool] | None = None) -> ContextBui
         workspace_id=None,
         messages=[ContextMessageOut(role="user", content="请调用工具", tokens=4)],
         tools=[
-            ContextToolOut(id=tool.id, name=tool.name, type=tool.type, tool_schema=tool.schema or {})
+            ContextToolOut(
+                id=tool.id,
+                name=tool.name,
+                type=tool.type,
+                tool_schema=tool.schema or {},
+            )
             for tool in (tools or [])
         ],
         retrieved_chunks=[],
@@ -107,7 +116,9 @@ def make_context(agent: Agent, *, tools: list[Tool] | None = None) -> ContextBui
     )
 
 
-def install_repositories(monkeypatch: pytest.MonkeyPatch, *, agents: dict, tools: dict) -> None:
+def install_repositories(
+    monkeypatch: pytest.MonkeyPatch, *, agents: dict, tools: dict
+) -> None:
     class FakeAgentRepository:
         def __init__(self, db, tenant_id) -> None:
             self.tenant_id = tenant_id
@@ -136,7 +147,9 @@ def install_agent_baseline(
 ) -> None:
     selected_model = model or make_model()
 
-    async def fake_ensure_conversation(db, *, tenant_id, user_id, agent, conversation_id, workspace_id, title):
+    async def fake_ensure_conversation(
+        db, *, tenant_id, user_id, agent, conversation_id, workspace_id, title
+    ):
         return Conversation(
             id=conversation_id or uuid4(),
             tenant_id=tenant_id,
@@ -157,19 +170,28 @@ def install_agent_baseline(
     monkeypatch.setattr(runtime, "build_agent_context", fake_build_agent_context)
 
 
-def chat_response(content: str, *, prompt_tokens: int = 1, completion_tokens: int = 1) -> dict:
+def chat_response(
+    content: str, *, prompt_tokens: int = 1, completion_tokens: int = 1
+) -> dict:
     return {
         "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        },
     }
 
 
-def test_non_stream_agent_with_bound_tool_returns_tool_output(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_stream_agent_with_bound_tool_returns_tool_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     tool = make_tool()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={tool.id: tool})
-    install_agent_baseline(monkeypatch, agent=agent, context=make_context(agent, tools=[tool]))
+    install_agent_baseline(
+        monkeypatch, agent=agent, context=make_context(agent, tools=[tool])
+    )
 
     async def fake_call_maas_chat(db, *args, name="maas_chat", **kwargs):
         return chat_response("最终回答" if name == "maas_final" else "准备调用工具")
@@ -184,7 +206,9 @@ def test_non_stream_agent_with_bound_tool_returns_tool_output(monkeypatch: pytes
             agent_id=agent.id,
             payload=AgentRunIn(
                 query="请调用工具",
-                tool_calls=[RuntimeToolCallIn(tool_id=tool.id, input={"payload": "ok"})],
+                tool_calls=[
+                    RuntimeToolCallIn(tool_id=tool.id, input={"payload": "ok"})
+                ],
             ),
         )
     )
@@ -196,12 +220,16 @@ def test_non_stream_agent_with_bound_tool_returns_tool_output(monkeypatch: pytes
     assert db.commits == 1
 
 
-def test_stream_agent_with_bound_tool_ends_with_done(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_agent_with_bound_tool_ends_with_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     tool = make_tool()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={tool.id: tool})
-    install_agent_baseline(monkeypatch, agent=agent, context=make_context(agent, tools=[tool]))
+    install_agent_baseline(
+        monkeypatch, agent=agent, context=make_context(agent, tools=[tool])
+    )
 
     async def fake_call_maas_chat_stream(*args, **kwargs):
         yield {"type": "delta", "text": "准备调用工具"}
@@ -222,7 +250,9 @@ def test_stream_agent_with_bound_tool_ends_with_done(monkeypatch: pytest.MonkeyP
                 agent_id=agent.id,
                 payload=AgentRunIn(
                     query="请调用工具",
-                    tool_calls=[RuntimeToolCallIn(tool_id=tool.id, input={"payload": "ok"})],
+                    tool_calls=[
+                        RuntimeToolCallIn(tool_id=tool.id, input={"payload": "ok"})
+                    ],
                 ),
             )
         )
@@ -233,12 +263,16 @@ def test_stream_agent_with_bound_tool_ends_with_done(monkeypatch: pytest.MonkeyP
     assert db.commits == 1
 
 
-def test_non_stream_tool_exception_returns_structured_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_stream_tool_exception_returns_structured_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     tool = make_tool()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={tool.id: tool})
-    install_agent_baseline(monkeypatch, agent=agent, context=make_context(agent, tools=[tool]))
+    install_agent_baseline(
+        monkeypatch, agent=agent, context=make_context(agent, tools=[tool])
+    )
 
     async def fake_call_maas_chat(*args, **kwargs):
         return chat_response("准备调用工具")
@@ -269,12 +303,16 @@ def test_non_stream_tool_exception_returns_structured_error(monkeypatch: pytest.
     assert db.traces[0].status == "failed"
 
 
-def test_stream_tool_exception_emits_error_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_tool_exception_emits_error_and_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     tool = make_tool()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={tool.id: tool})
-    install_agent_baseline(monkeypatch, agent=agent, context=make_context(agent, tools=[tool]))
+    install_agent_baseline(
+        monkeypatch, agent=agent, context=make_context(agent, tools=[tool])
+    )
 
     async def fake_call_maas_chat_stream(*args, **kwargs):
         yield {"type": "delta", "text": "准备调用工具"}
@@ -307,16 +345,21 @@ def test_stream_tool_exception_emits_error_and_done(monkeypatch: pytest.MonkeyPa
     assert events[-1]["data"]["status"] == "failed"
     assert events[-1]["data"]["tool_results"][0]["status"] == "failed"
     assert not any(
-        event["event"] == "delta" and "工具 echo 执行失败" in event["data"]["text"] for event in events
+        event["event"] == "delta" and "工具 echo 执行失败" in event["data"]["text"]
+        for event in events
     )
 
 
-def test_stream_tool_exception_should_emit_error_event_before_done(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_tool_exception_should_emit_error_event_before_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     tool = make_tool()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={tool.id: tool})
-    install_agent_baseline(monkeypatch, agent=agent, context=make_context(agent, tools=[tool]))
+    install_agent_baseline(
+        monkeypatch, agent=agent, context=make_context(agent, tools=[tool])
+    )
 
     async def fake_call_maas_chat_stream(*args, **kwargs):
         yield {"type": "delta", "text": "准备调用工具"}
@@ -346,7 +389,9 @@ def test_stream_tool_exception_should_emit_error_event_before_done(monkeypatch: 
     assert any(event["event"] == "error" for event in events)
 
 
-def test_tool_not_bound_or_missing_returns_failed_tool_result(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tool_not_bound_or_missing_returns_failed_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     bound_tool = make_tool()
     missing_tool_id = uuid4()
@@ -386,15 +431,23 @@ def test_tool_not_bound_or_missing_returns_failed_tool_result(monkeypatch: pytes
     assert missing_result[0].output["error"] == "tool_not_found"
 
 
-def test_code_tool_denied_consistently_for_orchestrator_and_direct_run(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_code_tool_denied_consistently_for_orchestrator_and_direct_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
-    code_tool = make_tool(tool_type="code", name="python", config={"code": "print('blocked')"})
+    code_tool = make_tool(
+        tool_type="code", name="python", config={"code": "print('blocked')"}
+    )
     db = FakeDB()
-    install_repositories(monkeypatch, agents={agent.id: agent}, tools={code_tool.id: code_tool})
+    install_repositories(
+        monkeypatch, agents={agent.id: agent}, tools={code_tool.id: code_tool}
+    )
     monkeypatch.setattr(tool_service.settings, "enable_auto_code_tools", False)
     monkeypatch.setattr(tool_service.settings, "code_tool_allowlist", "")
 
-    direct = run_async(tool_service.run_tool(db, tenant_id=TENANT_ID, tool_id=code_tool.id, input={}))
+    direct = run_async(
+        tool_service.run_tool(db, tenant_id=TENANT_ID, tool_id=code_tool.id, input={})
+    )
     via_orchestrator = run_async(
         runtime.run_tool_loop(
             db,
@@ -415,11 +468,17 @@ def test_code_tool_denied_consistently_for_orchestrator_and_direct_run(monkeypat
     assert via_orchestrator.output["error"] == direct.output["error"]
 
 
-def test_code_tool_allowed_consistently_for_orchestrator_and_direct_run(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_code_tool_allowed_consistently_for_orchestrator_and_direct_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
-    code_tool = make_tool(tool_type="code", name="python", config={"code": "print('ok')"})
+    code_tool = make_tool(
+        tool_type="code", name="python", config={"code": "print('ok')"}
+    )
     db = FakeDB()
-    install_repositories(monkeypatch, agents={agent.id: agent}, tools={code_tool.id: code_tool})
+    install_repositories(
+        monkeypatch, agents={agent.id: agent}, tools={code_tool.id: code_tool}
+    )
     monkeypatch.setattr(tool_service.settings, "enable_auto_code_tools", True)
 
     async def fake_run_code_tool(tool, input):
@@ -427,7 +486,9 @@ def test_code_tool_allowed_consistently_for_orchestrator_and_direct_run(monkeypa
 
     monkeypatch.setattr(tool_service, "run_code_tool", fake_run_code_tool)
 
-    direct = run_async(tool_service.run_tool(db, tenant_id=TENANT_ID, tool_id=code_tool.id, input={}))
+    direct = run_async(
+        tool_service.run_tool(db, tenant_id=TENANT_ID, tool_id=code_tool.id, input={})
+    )
     via_orchestrator = run_async(
         runtime.run_tool_loop(
             db,
@@ -448,7 +509,9 @@ def test_code_tool_allowed_consistently_for_orchestrator_and_direct_run(monkeypa
     assert via_orchestrator.output == direct.output
 
 
-def test_stream_model_failure_commits_failed_trace_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_model_failure_commits_failed_trace_and_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={})
@@ -479,7 +542,9 @@ def test_stream_model_failure_commits_failed_trace_and_done(monkeypatch: pytest.
     assert db.traces[0].output == {"error": "maas_timeout"}
 
 
-def test_non_stream_dependency_failure_is_structured_and_committed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_stream_dependency_failure_is_structured_and_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={})
@@ -507,7 +572,9 @@ def test_non_stream_dependency_failure_is_structured_and_committed(monkeypatch: 
     assert db.traces[0].output == {"error": "dependency_unavailable"}
 
 
-def test_stream_dependency_failure_is_structured_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_dependency_failure_is_structured_and_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={})
@@ -538,7 +605,9 @@ def test_stream_dependency_failure_is_structured_and_done(monkeypatch: pytest.Mo
     assert db.traces[0].output == {"error": "dependency_unavailable"}
 
 
-def test_non_stream_model_failure_should_commit_failed_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_stream_model_failure_should_commit_failed_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     agent = make_agent()
     db = FakeDB()
     install_repositories(monkeypatch, agents={agent.id: agent}, tools={})

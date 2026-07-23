@@ -20,7 +20,9 @@ class KnowledgeBaseCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
     name: str = Field(min_length=1)
-    type: str = Field(pattern=r"^(doc_regulation|policy|compliance|sop|standard|case|material|faq)$")
+    type: str = Field(
+        pattern=r"^(doc_regulation|policy|compliance|sop|standard|case|material|faq)$"
+    )
     description: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     embedding_model: str = "mock-embedding"
@@ -37,7 +39,9 @@ class KnowledgeBaseUpdate(BaseModel):
     description: str | None = None
     config: dict[str, Any] | None = None
     embedding_model: str | None = None
-    status: str | None = Field(default=None, pattern=r"^(active|disabled|draft|archived)$")
+    status: str | None = Field(
+        default=None, pattern=r"^(active|disabled|draft|archived)$"
+    )
 
 
 class KnowledgeBaseOut(BaseModel):
@@ -55,6 +59,20 @@ class KnowledgeBaseOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class KnowledgeBaseHealthOut(BaseModel):
+    kb_id: UUID
+    document_total: int
+    document_success: int
+    document_failed: int
+    document_processing: int
+    chunk_total: int
+    chunks_without_embedding: int
+    avg_chunk_length: float
+    short_chunk_ratio: float
+    failure_reasons: dict[str, int]
+    suggestions: list[str]
 
 
 class DocumentOut(BaseModel):

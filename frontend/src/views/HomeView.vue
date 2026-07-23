@@ -11,7 +11,7 @@ onMounted(async () => {
   try {
     health.value = await getBackendHealth()
   } catch {
-    health_error.value = '后端健康检查暂不可用'
+    health_error.value = '服务状态暂不可用'
   }
 })
 </script>
@@ -23,7 +23,7 @@ onMounted(async () => {
         <div class="brand-mark">AI</div>
         <div>
           <strong>企业智能体中台</strong>
-          <span>P0 骨架</span>
+          <span>AI SaaS Console</span>
         </div>
       </div>
 
@@ -49,7 +49,7 @@ onMounted(async () => {
 
     <section class="content">
       <header class="topbar">
-        <h1>工程骨架</h1>
+        <h1>平台概览</h1>
         <el-tag v-if="health" type="success" effect="plain">{{ health.service }} {{ health.status }}</el-tag>
         <el-tag v-else-if="health_error" type="danger" effect="plain">{{ health_error }}</el-tag>
         <el-tag v-else effect="plain">检查中</el-tag>
@@ -57,19 +57,19 @@ onMounted(async () => {
 
       <section class="status-grid">
         <article class="status-card">
-          <span>Backend</span>
+          <span>平台服务</span>
           <strong>{{ health?.version ?? '等待连接' }}</strong>
         </article>
         <article class="status-card">
-          <span>MaaS</span>
+          <span>模型服务</span>
           <strong>8100</strong>
         </article>
         <article class="status-card">
-          <span>Sandbox</span>
+          <span>工具执行</span>
           <strong>8200</strong>
         </article>
         <article class="status-card">
-          <span>Frontend</span>
+          <span>前端应用</span>
           <strong>Vue3</strong>
         </article>
       </section>
@@ -223,4 +223,3 @@ onMounted(async () => {
   }
 }
 </style>
-

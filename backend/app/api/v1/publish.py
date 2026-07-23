@@ -36,7 +36,12 @@ def publish_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
-@router.post("", response_model=PublishedAppOut, status_code=status.HTTP_201_CREATED, summary="Publish agent as app")
+@router.post(
+    "",
+    response_model=PublishedAppOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Publish agent as app",
+)
 async def create_published_app_api(
     payload: PublishedAppCreate,
     request: Request,
@@ -44,7 +49,9 @@ async def create_published_app_api(
     db: AsyncSession = Depends(get_db),
 ) -> PublishedAppOut:
     try:
-        app = await create_published_app(db, tenant_id=auth.tenant_id, user_id=auth.user_id, payload=payload)
+        app = await create_published_app(
+            db, tenant_id=auth.tenant_id, user_id=auth.user_id, payload=payload
+        )
     except ValueError as exc:
         raise publish_error(exc) from exc
     await write_audit(
@@ -76,11 +83,15 @@ async def get_published_app_api(
 ) -> PublishedAppOut:
     app = await get_published_app(db, tenant_id=auth.tenant_id, app_id=app_id)
     if app is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found"
+        )
     return app
 
 
-@router.post("/{app_id}/unpublish", response_model=PublishedAppOut, summary="Unpublish app")
+@router.post(
+    "/{app_id}/unpublish", response_model=PublishedAppOut, summary="Unpublish app"
+)
 async def unpublish_app_api(
     app_id: UUID,
     request: Request,
@@ -89,7 +100,9 @@ async def unpublish_app_api(
 ) -> PublishedAppOut:
     app = await unpublish_app(db, tenant_id=auth.tenant_id, app_id=app_id)
     if app is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -139,7 +152,9 @@ async def create_app_api_key_api(
     return AppApiKeyCreatedOut(**key_out.model_dump(), api_key=raw_key)
 
 
-@router.get("/{app_id}/keys", response_model=list[AppApiKeyOut], summary="List app API keys")
+@router.get(
+    "/{app_id}/keys", response_model=list[AppApiKeyOut], summary="List app API keys"
+)
 async def list_app_api_keys_api(
     app_id: UUID,
     auth: AuthContext = Depends(get_current_auth),
@@ -147,11 +162,17 @@ async def list_app_api_keys_api(
 ) -> list[AppApiKeyOut]:
     keys = await list_app_api_keys(db, tenant_id=auth.tenant_id, app_id=app_id)
     if keys is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found"
+        )
     return keys
 
 
-@router.post("/{app_id}/keys/{key_id}/status", response_model=AppApiKeyOut, summary="Set app API key status")
+@router.post(
+    "/{app_id}/keys/{key_id}/status",
+    response_model=AppApiKeyOut,
+    summary="Set app API key status",
+)
 async def set_app_api_key_status_api(
     app_id: UUID,
     key_id: UUID,
@@ -168,7 +189,9 @@ async def set_app_api_key_status_api(
         status=payload.status,
     )
     if key is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="app_api_key_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="app_api_key_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,

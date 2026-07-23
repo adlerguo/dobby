@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DashboardMetricOut(BaseModel):
@@ -31,6 +31,10 @@ class DashboardTechnicalOut(BaseModel):
     spans_by_status: dict[str, int]
     latency: dict[str, int | float | None]
     token_usage: dict[str, int]
+    daily: list[dict[str, Any]] = Field(default_factory=list)
+    by_agent: list[dict[str, Any]] = Field(default_factory=list)
+    by_model: list[dict[str, Any]] = Field(default_factory=list)
+    by_channel: list[dict[str, Any]] = Field(default_factory=list)
     top_agents: list[dict[str, Any]]
     recent_errors: list[dict[str, Any]]
     recent_runs: list[dict[str, Any]]

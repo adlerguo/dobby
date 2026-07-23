@@ -17,13 +17,21 @@ async def list_model_catalog(
         stmt = stmt.where(ModelCatalog.model_type == model_type)
     if provider:
         stmt = stmt.where(ModelCatalog.provider == provider)
-    stmt = stmt.order_by(ModelCatalog.sort_order.asc(), ModelCatalog.provider.asc(), ModelCatalog.model_code.asc())
+    stmt = stmt.order_by(
+        ModelCatalog.sort_order.asc(),
+        ModelCatalog.provider.asc(),
+        ModelCatalog.model_code.asc(),
+    )
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
-async def get_model_catalog_item(db: AsyncSession, catalog_id: UUID) -> ModelCatalog | None:
+async def get_model_catalog_item(
+    db: AsyncSession, catalog_id: UUID
+) -> ModelCatalog | None:
     result = await db.execute(
-        select(ModelCatalog).where(ModelCatalog.id == catalog_id, ModelCatalog.is_active.is_(True))
+        select(ModelCatalog).where(
+            ModelCatalog.id == catalog_id, ModelCatalog.is_active.is_(True)
+        )
     )
     return result.scalar_one_or_none()

@@ -1,0 +1,112 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_KEY: ${MINIO_KEY:?MINIO_KEY is required}
+      MINIO_SECRET: ${MINIO_SECRET:?MINIO_SECRET is required}
+      MAAS_BASE_URL: ${MAAS_BASE_URL:-http://maas:8100}
+      MAAS_ADMIN_TOKEN: ${MAAS_ADMIN_TOKEN:?MAAS_ADMIN_TOKEN is required}
+      SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-http://sandbox:8200}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      AUTO_GENERATE_SECRETS: "false"
+      PRODUCTION_MODE: "true"
+    ports:
+      - "${BACKEND_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      maas:
+        condition: service_started
+      sandbox:
+        condition: service_started
+    networks:
+      - default
+      - sandbox_net
+
+  maas:
+    build:
+      context: ./maas
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+      MAAS_ADMIN_TOKEN: ${MAAS_ADMIN_TOKEN:?MAAS_ADMIN_TOKEN is required}
+      AUTO_GENERATE_SECRETS: "false"
+      PRODUCTION_MODE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  sandbox:
+    build:
+      context: ./sandbox
+    environment:
+      MAX_CONCURRENCY: ${SANDBOX_MAX_CONCURRENCY:-2}
+      CPU_SECONDS: ${SANDBOX_CPU_SECONDS:-5}
+      MEMORY_MB: ${SANDBOX_MEMORY_MB:-256}
+      MAX_OPEN_FILES: ${SANDBOX_MAX_OPEN_FILES:-64}
+      MAX_PROCESSES: ${SANDBOX_MAX_PROCESSES:-32}
+    networks:
+      - sandbox_net
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-18080}:80"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  sandbox_net:
+    internal: true

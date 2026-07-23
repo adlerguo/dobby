@@ -38,19 +38,27 @@ async def get_app_api_key_context(
     if key is None or key.status != "active" or is_expired(key):
         raise invalid_credentials()
     if key.app_id != app_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="app_forbidden")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="app_forbidden"
+        )
 
     app = await db.get(PublishedApp, key.app_id)
     if app is None or app.tenant_id != key.tenant_id or app.status != "published":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable"
+        )
 
     agent = await db.get(Agent, app.agent_id)
     if agent is None or agent.tenant_id != app.tenant_id or agent.status != "active":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable"
+        )
 
     user_id = key.created_by or app.created_by
     if user_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable"
+        )
 
     return AppApiKeyContext(
         tenant_id=key.tenant_id,

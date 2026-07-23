@@ -6,18 +6,31 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Agent, KnowledgeBase, Model, Tool, Workspace, WorkspaceResource
-from app.schemas import WorkspaceCreate, WorkspaceOut, WorkspaceResourceIn, WorkspaceResourceOut, WorkspaceUpdate
-from app.services.validation import detail_from_integrity_error, ensure_tenant_name_available
+from app.schemas import (
+    WorkspaceCreate,
+    WorkspaceOut,
+    WorkspaceResourceIn,
+    WorkspaceResourceOut,
+    WorkspaceUpdate,
+)
+from app.services.validation import (
+    detail_from_integrity_error,
+    ensure_tenant_name_available,
+)
 
 
 async def list_workspaces(db: AsyncSession, *, tenant_id: UUID) -> list[WorkspaceOut]:
     result = await db.execute(
-        select(Workspace).where(Workspace.tenant_id == tenant_id).order_by(Workspace.created_at.desc())
+        select(Workspace)
+        .where(Workspace.tenant_id == tenant_id)
+        .order_by(Workspace.created_at.desc())
     )
     return [await workspace_out(db, workspace) for workspace in result.scalars().all()]
 
 
-async def get_workspace(db: AsyncSession, *, tenant_id: UUID, workspace_id: UUID) -> WorkspaceOut | None:
+async def get_workspace(
+    db: AsyncSession, *, tenant_id: UUID, workspace_id: UUID
+) -> WorkspaceOut | None:
     workspace = await load_workspace(db, tenant_id=tenant_id, workspace_id=workspace_id)
     if workspace is None:
         return None
@@ -50,7 +63,9 @@ async def create_workspace(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError(detail_from_integrity_error(exc, "workspace_create_conflict")) from exc
+        raise ValueError(
+            detail_from_integrity_error(exc, "workspace_create_conflict")
+        ) from exc
     await db.refresh(workspace)
     return await workspace_out(db, workspace)
 
@@ -83,7 +98,9 @@ async def update_workspace(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError(detail_from_integrity_error(exc, "workspace_update_conflict")) from exc
+        raise ValueError(
+            detail_from_integrity_error(exc, "workspace_update_conflict")
+        ) from exc
     await db.refresh(workspace)
     return await workspace_out(db, workspace)
 
@@ -153,7 +170,9 @@ async def get_workspace_resource_ids(
         raise ValueError("workspace_not_found")
 
     result = await db.execute(
-        select(WorkspaceResource).where(WorkspaceResource.workspace_id == workspace_id).order_by(WorkspaceResource.id)
+        select(WorkspaceResource)
+        .where(WorkspaceResource.workspace_id == workspace_id)
+        .order_by(WorkspaceResource.id)
     )
     grouped: dict[str, list[UUID]] = {"kb": [], "agent": [], "tool": [], "model": []}
     for resource in result.scalars().all():
@@ -175,14 +194,24 @@ async def workspace_out(db: AsyncSession, workspace: Workspace) -> WorkspaceOut:
     )
 
 
-async def load_workspace(db: AsyncSession, *, tenant_id: UUID, workspace_id: UUID) -> Workspace | None:
-    result = await db.execute(select(Workspace).where(Workspace.id == workspace_id, Workspace.tenant_id == tenant_id))
+async def load_workspace(
+    db: AsyncSession, *, tenant_id: UUID, workspace_id: UUID
+) -> Workspace | None:
+    result = await db.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id, Workspace.tenant_id == tenant_id
+        )
+    )
     return result.scalar_one_or_none()
 
 
-async def load_resources(db: AsyncSession, *, workspace_id: UUID) -> list[WorkspaceResource]:
+async def load_resources(
+    db: AsyncSession, *, workspace_id: UUID
+) -> list[WorkspaceResource]:
     result = await db.execute(
-        select(WorkspaceResource).where(WorkspaceResource.workspace_id == workspace_id).order_by(WorkspaceResource.id)
+        select(WorkspaceResource)
+        .where(WorkspaceResource.workspace_id == workspace_id)
+        .order_by(WorkspaceResource.id)
     )
     return list(result.scalars().all())
 
@@ -204,7 +233,9 @@ async def load_resource(
     return result.scalar_one_or_none()
 
 
-async def validate_workspace_resource(db: AsyncSession, *, tenant_id: UUID, payload: WorkspaceResourceIn) -> None:
+async def validate_workspace_resource(
+    db: AsyncSession, *, tenant_id: UUID, payload: WorkspaceResourceIn
+) -> None:
     if payload.resource_type == "kb":
         result = await db.execute(
             select(KnowledgeBase.id).where(
@@ -242,7 +273,9 @@ async def validate_workspace_resource(db: AsyncSession, *, tenant_id: UUID, payl
         return
 
     if payload.resource_type == "model":
-        result = await db.execute(select(Model.id).where(Model.id == payload.resource_id))
+        result = await db.execute(
+            select(Model.id).where(Model.id == payload.resource_id)
+        )
         if result.scalar_one_or_none() is None:
             raise ValueError("model_not_found")
         return
@@ -262,8 +295,12 @@ async def resource_outs(
             workspace_id=resource.workspace_id,
             resource_type=resource.resource_type,
             resource_id=resource.resource_id,
-            resource_name=names.get((resource.resource_type, resource.resource_id), {}).get("name"),
-            resource_status=names.get((resource.resource_type, resource.resource_id), {}).get("status"),
+            resource_name=names.get(
+                (resource.resource_type, resource.resource_id), {}
+            ).get("name"),
+            resource_status=names.get(
+                (resource.resource_type, resource.resource_id), {}
+            ).get("status"),
         )
         for resource in resources
     ]
@@ -283,16 +320,27 @@ async def load_resource_names(
     names: dict[tuple[str | None, UUID | None], dict[str, str | None]] = {}
     if grouped.get("kb"):
         result = await db.execute(
-            select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.id.in_(grouped["kb"]))
+            select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == tenant_id,
+                KnowledgeBase.id.in_(grouped["kb"]),
+            )
         )
         for kb in result.scalars().all():
             names[("kb", kb.id)] = {"name": kb.name, "status": kb.status}
     if grouped.get("agent"):
-        result = await db.execute(select(Agent).where(Agent.tenant_id == tenant_id, Agent.id.in_(grouped["agent"])))
+        result = await db.execute(
+            select(Agent).where(
+                Agent.tenant_id == tenant_id, Agent.id.in_(grouped["agent"])
+            )
+        )
         for agent in result.scalars().all():
             names[("agent", agent.id)] = {"name": agent.name, "status": agent.status}
     if grouped.get("tool"):
-        result = await db.execute(select(Tool).where(Tool.tenant_id == tenant_id, Tool.id.in_(grouped["tool"])))
+        result = await db.execute(
+            select(Tool).where(
+                Tool.tenant_id == tenant_id, Tool.id.in_(grouped["tool"])
+            )
+        )
         for tool in result.scalars().all():
             names[("tool", tool.id)] = {"name": tool.name, "status": tool.status}
     if grouped.get("model"):

@@ -1,37 +1,73 @@
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
-from sqlalchemy import func, select
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_current_auth, require_perm
 from app.core.database import get_db
+from app.core.errors import (
+    AppError,
+    ConflictError,
+    DependencyError,
+    NotFoundError,
+    ValidationError,
+)
 from app.models import Document, KnowledgeBase
 from app.rag.chunk_store import chunk_model_for_dim
 from app.rag.retrieve import retrieve_chunks
 from app.rag.tasks import enqueue_parse_document, enqueue_reindex_document
 from app.repositories import DocumentRepository, KnowledgeBaseRepository
-from app.schemas import DocumentChunkOut, DocumentOut, KnowledgeBaseCreate, KnowledgeBaseOut, KnowledgeBaseUpdate, ReindexOut, RetrieveIn, RetrieveOut
-from app.services import archive_kb, create_kb, delete_document, update_kb, upload_document
+from app.schemas import (
+    DocumentChunkOut,
+    DocumentOut,
+    KnowledgeBaseCreate,
+    KnowledgeBaseHealthOut,
+    KnowledgeBaseOut,
+    KnowledgeBaseUpdate,
+    ReindexOut,
+    RetrieveIn,
+    RetrieveOut,
+)
+from app.services import (
+    archive_kb,
+    create_kb,
+    delete_document,
+    update_kb,
+    upload_document,
+)
 from app.services.audit_service import write_audit
 
 router = APIRouter(tags=["knowledge_bases"])
 
 
-def kb_error(exc: ValueError) -> HTTPException:
+def kb_error(exc: ValueError) -> AppError:
     detail = str(exc)
     if detail == "no_active_model_channel":
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+        return ConflictError(code=detail)
     if detail == "kb_embedding_model_locked_has_documents":
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+        return ConflictError(code=detail)
     if detail.endswith("_exists"):
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+        return ConflictError(code=detail)
     if detail.endswith("_not_found"):
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        return NotFoundError(code=detail)
+    if detail in {"maas_probe_failed", "embedding_probe_failed"}:
+        return DependencyError(code=detail)
+    return ValidationError(code=detail)
 
 
-@router.get("/kbs", response_model=list[KnowledgeBaseOut], summary="List knowledge bases")
+@router.get(
+    "/kbs", response_model=list[KnowledgeBaseOut], summary="List knowledge bases"
+)
 async def list_kbs(
     type: str | None = Query(default=None),
     auth: AuthContext = Depends(get_current_auth),
@@ -54,7 +90,9 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        kb = await create_kb(db, tenant_id=auth.tenant_id, created_by=auth.user_id, payload=payload)
+        kb = await create_kb(
+            db, tenant_id=auth.tenant_id, created_by=auth.user_id, payload=payload
+        )
     except ValueError as exc:
         raise kb_error(exc) from exc
     await write_audit(
@@ -70,7 +108,9 @@ async def create_knowledge_base(
     return kb
 
 
-@router.get("/kbs/{kb_id}", response_model=KnowledgeBaseOut, summary="Get knowledge base")
+@router.get(
+    "/kbs/{kb_id}", response_model=KnowledgeBaseOut, summary="Get knowledge base"
+)
 async def get_kb(
     kb_id: UUID,
     auth: AuthContext = Depends(get_current_auth),
@@ -79,11 +119,33 @@ async def get_kb(
     repo = KnowledgeBaseRepository(db, auth.tenant_id)
     kb = await repo.get_by_id(kb_id)
     if kb is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+        raise NotFoundError(code="not_found", message="kb_not_found")
     return kb
 
 
-@router.patch("/kbs/{kb_id}", response_model=KnowledgeBaseOut, summary="Update knowledge base")
+@router.get(
+    "/kbs/{kb_id}/health",
+    response_model=KnowledgeBaseHealthOut,
+    summary="Get knowledge base health",
+)
+async def get_kb_health(
+    kb_id: UUID,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeBaseHealthOut:
+    repo = KnowledgeBaseRepository(db, auth.tenant_id)
+    kb = await repo.get_by_id(kb_id)
+    if kb is None or kb.status == "archived":
+        raise NotFoundError(code="not_found", message="kb_not_found")
+
+    stats = await load_kb_health_stats(db, tenant_id=auth.tenant_id, kb_id=kb_id)
+    suggestions = build_kb_health_suggestions(stats)
+    return KnowledgeBaseHealthOut(kb_id=kb_id, suggestions=suggestions, **stats)
+
+
+@router.patch(
+    "/kbs/{kb_id}", response_model=KnowledgeBaseOut, summary="Update knowledge base"
+)
 async def patch_kb(
     kb_id: UUID,
     payload: KnowledgeBaseUpdate,
@@ -96,7 +158,7 @@ async def patch_kb(
     except ValueError as exc:
         raise kb_error(exc) from exc
     if kb is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+        raise NotFoundError(code="not_found", message="kb_not_found")
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -110,7 +172,11 @@ async def patch_kb(
     return kb
 
 
-@router.delete("/kbs/{kb_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Archive knowledge base")
+@router.delete(
+    "/kbs/{kb_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Archive knowledge base",
+)
 async def delete_kb(
     kb_id: UUID,
     request: Request,
@@ -119,7 +185,7 @@ async def delete_kb(
 ) -> None:
     deleted = await archive_kb(db, tenant_id=auth.tenant_id, kb_id=kb_id)
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+        raise NotFoundError(code="not_found", message="kb_not_found")
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -146,11 +212,13 @@ async def upload_kb_document(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        document = await upload_document(db, tenant_id=auth.tenant_id, kb_id=kb_id, file=file)
+        document = await upload_document(
+            db, tenant_id=auth.tenant_id, kb_id=kb_id, file=file
+        )
     except ValueError as exc:
         raise kb_error(exc) from exc
     if document is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+        raise NotFoundError(code="not_found", message="kb_not_found")
     background_tasks.add_task(enqueue_parse_document, document.id)
     await write_audit(
         db,
@@ -159,13 +227,20 @@ async def upload_kb_document(
         action="document.upload",
         resource_type="document",
         resource_id=document.id,
-        detail={"kb_id": str(kb_id), "name": document.name, "mime": document.mime, "size": document.size},
+        detail={
+            "kb_id": str(kb_id),
+            "name": document.name,
+            "mime": document.mime,
+            "size": document.size,
+        },
         request=request,
     )
     return document
 
 
-@router.get("/kbs/{kb_id}/documents", response_model=list[DocumentOut], summary="List documents")
+@router.get(
+    "/kbs/{kb_id}/documents", response_model=list[DocumentOut], summary="List documents"
+)
 async def list_kb_documents(
     kb_id: UUID,
     auth: AuthContext = Depends(get_current_auth),
@@ -173,12 +248,16 @@ async def list_kb_documents(
 ) -> list:
     kb_repo = KnowledgeBaseRepository(db, auth.tenant_id)
     if await kb_repo.get_by_id(kb_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+        raise NotFoundError(code="not_found", message="kb_not_found")
     repo = DocumentRepository(db, auth.tenant_id)
     return list(await repo.list_by_kb(kb_id))
 
 
-@router.post("/kbs/{kb_id}/reindex", response_model=ReindexOut, summary="Reindex knowledge base documents")
+@router.post(
+    "/kbs/{kb_id}/reindex",
+    response_model=ReindexOut,
+    summary="Reindex knowledge base documents",
+)
 async def reindex_kb_documents(
     kb_id: UUID,
     background_tasks: BackgroundTasks,
@@ -189,7 +268,7 @@ async def reindex_kb_documents(
     kb_repo = KnowledgeBaseRepository(db, auth.tenant_id)
     kb = await kb_repo.get_by_id(kb_id)
     if kb is None or kb.status == "archived":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+        raise NotFoundError(code="not_found", message="kb_not_found")
 
     result = await db.execute(
         select(Document).where(
@@ -209,13 +288,20 @@ async def reindex_kb_documents(
         action="kb.reindex",
         resource_type="kb",
         resource_id=kb_id,
-        detail={"document_count": len(documents), "embedding_model": kb.embedding_model},
+        detail={
+            "document_count": len(documents),
+            "embedding_model": kb.embedding_model,
+        },
         request=request,
     )
     return ReindexOut(kb_id=kb_id, document_count=len(documents), status="queued")
 
 
-@router.get("/documents/{document_id}/chunks", response_model=list[DocumentChunkOut], summary="List document chunks")
+@router.get(
+    "/documents/{document_id}/chunks",
+    response_model=list[DocumentChunkOut],
+    summary="List document chunks",
+)
 async def list_document_chunks(
     document_id: UUID,
     auth: AuthContext = Depends(get_current_auth),
@@ -228,7 +314,7 @@ async def list_document_chunks(
     )
     row = document_result.first()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document_not_found")
+        raise NotFoundError(code="not_found", message="document_not_found")
     _, kb = row
     chunk_model = chunk_model_for_dim(kb.embedding_dim)
 
@@ -243,13 +329,17 @@ async def list_document_chunks(
             chunk_model.embedding.is_not(None).label("has_embedding"),
             chunk_model.created_at,
         )
-        .where(chunk_model.doc_id == document_id, chunk_model.tenant_id == auth.tenant_id)
+        .where(
+            chunk_model.doc_id == document_id, chunk_model.tenant_id == auth.tenant_id
+        )
         .order_by(chunk_model.seq.asc().nulls_last(), chunk_model.created_at.asc())
     )
     return [DocumentChunkOut(**dict(row)) for row in result.mappings().all()]
 
 
-@router.post("/kbs/{kb_id}/retrieve", response_model=RetrieveOut, summary="Retrieve chunks")
+@router.post(
+    "/kbs/{kb_id}/retrieve", response_model=RetrieveOut, summary="Retrieve chunks"
+)
 async def retrieve_kb_chunks(
     kb_id: UUID,
     payload: RetrieveIn,
@@ -269,20 +359,127 @@ async def retrieve_kb_chunks(
     except ValueError as exc:
         raise kb_error(exc) from exc
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="kb_not_found")
+        raise NotFoundError(code="not_found", message="kb_not_found")
     return result
 
 
-@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete document")
+async def load_kb_health_stats(
+    db: AsyncSession, *, tenant_id: UUID, kb_id: UUID
+) -> dict:
+    document_sql = text(
+        """
+        SELECT
+            count(*)::int AS document_total,
+            count(*) FILTER (WHERE parse_status = 'done')::int AS document_success,
+            count(*) FILTER (WHERE parse_status = 'failed')::int AS document_failed,
+            count(*) FILTER (
+                WHERE coalesce(parse_status, 'pending') NOT IN ('done', 'failed', 'archived')
+            )::int AS document_processing
+        FROM documents
+        WHERE tenant_id = :tenant_id AND kb_id = :kb_id
+        """
+    )
+    chunk_sql = text(
+        """
+        WITH chunk_stats AS (
+            SELECT
+                count(*)::bigint AS chunk_total,
+                count(*) FILTER (WHERE embedding IS NULL)::bigint AS chunks_without_embedding,
+                coalesce(sum(length(content)), 0)::bigint AS total_chunk_length,
+                count(*) FILTER (WHERE length(content) < 50)::bigint AS short_chunk_total
+            FROM chunks
+            WHERE tenant_id = :tenant_id AND kb_id = :kb_id
+            UNION ALL
+            SELECT
+                count(*)::bigint,
+                count(*) FILTER (WHERE embedding IS NULL)::bigint,
+                coalesce(sum(length(content)), 0)::bigint,
+                count(*) FILTER (WHERE length(content) < 50)::bigint
+            FROM chunks_1024
+            WHERE tenant_id = :tenant_id AND kb_id = :kb_id
+            UNION ALL
+            SELECT
+                count(*)::bigint,
+                count(*) FILTER (WHERE embedding IS NULL)::bigint,
+                coalesce(sum(length(content)), 0)::bigint,
+                count(*) FILTER (WHERE length(content) < 50)::bigint
+            FROM chunks_3072
+            WHERE tenant_id = :tenant_id AND kb_id = :kb_id
+        )
+        SELECT
+            coalesce(sum(chunk_total), 0)::int AS chunk_total,
+            coalesce(sum(chunks_without_embedding), 0)::int AS chunks_without_embedding,
+            coalesce(sum(total_chunk_length)::float / nullif(sum(chunk_total), 0), 0)::float AS avg_chunk_length,
+            coalesce(sum(short_chunk_total)::float / nullif(sum(chunk_total), 0), 0)::float AS short_chunk_ratio
+        FROM chunk_stats
+        """
+    )
+    failure_sql = text(
+        """
+        SELECT
+            coalesce(meta #>> '{ingest_task,error,error_code}', 'unknown') AS error_code,
+            count(*)::int AS count
+        FROM documents
+        WHERE tenant_id = :tenant_id
+            AND kb_id = :kb_id
+            AND parse_status = 'failed'
+        GROUP BY error_code
+        ORDER BY count DESC, error_code ASC
+        """
+    )
+    params = {"tenant_id": tenant_id, "kb_id": kb_id}
+    document_row = (await db.execute(document_sql, params)).mappings().one()
+    chunk_row = (await db.execute(chunk_sql, params)).mappings().one()
+    failure_rows = (await db.execute(failure_sql, params)).mappings().all()
+
+    return {
+        "document_total": document_row["document_total"],
+        "document_success": document_row["document_success"],
+        "document_failed": document_row["document_failed"],
+        "document_processing": document_row["document_processing"],
+        "chunk_total": chunk_row["chunk_total"],
+        "chunks_without_embedding": chunk_row["chunks_without_embedding"],
+        "avg_chunk_length": round(float(chunk_row["avg_chunk_length"] or 0), 2),
+        "short_chunk_ratio": round(float(chunk_row["short_chunk_ratio"] or 0), 4),
+        "failure_reasons": {row["error_code"]: row["count"] for row in failure_rows},
+    }
+
+
+def build_kb_health_suggestions(stats: dict) -> list[str]:
+    suggestions: list[str] = []
+    if stats["document_failed"] > 0:
+        suggestions.append("存在解析失败文档，请按失败原因重新上传或调整文件格式。")
+    if stats["document_processing"] > 0:
+        suggestions.append("仍有文档处理中，请稍后刷新或检查解析任务状态。")
+    if stats["chunk_total"] == 0 and stats["document_success"] > 0:
+        suggestions.append("已成功解析文档但没有生成片段，请重新索引知识库。")
+    if stats["chunks_without_embedding"] > 0:
+        suggestions.append(
+            "存在未写入向量的片段，请检查 embedding 模型渠道后重新索引。"
+        )
+    if stats["short_chunk_ratio"] >= 0.3:
+        suggestions.append("超短片段比例偏高，建议调大分块长度或检查文档排版。")
+    if not suggestions:
+        suggestions.append("知识库数据状态正常，无需处理。")
+    return suggestions
+
+
+@router.delete(
+    "/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete document",
+)
 async def remove_document(
     document_id: UUID,
     request: Request,
     auth: AuthContext = Depends(require_perm("kb:create")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    deleted = await delete_document(db, tenant_id=auth.tenant_id, document_id=document_id)
+    deleted = await delete_document(
+        db, tenant_id=auth.tenant_id, document_id=document_id
+    )
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document_not_found")
+        raise NotFoundError(code="not_found", message="document_not_found")
     await write_audit(
         db,
         tenant_id=auth.tenant_id,

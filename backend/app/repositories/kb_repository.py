@@ -24,7 +24,9 @@ class DocumentRepository(TenantRepository[Document]):
 
     async def list_by_kb(self, kb_id: UUID) -> Sequence[Document]:
         result = await self.db.execute(
-            self.query().where(Document.kb_id == kb_id).order_by(Document.created_at.desc())
+            self.query()
+            .where(Document.kb_id == kb_id)
+            .order_by(Document.created_at.desc())
         )
         return result.scalars().all()
 

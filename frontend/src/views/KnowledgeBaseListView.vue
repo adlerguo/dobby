@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { RadarChart, type RadarSeriesOption } from 'echarts/charts'
+import { RadarComponent, TooltipComponent, type RadarComponentOption, type TooltipComponentOption } from 'echarts/components'
+import { type ComposeOption, type ECharts, init, use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
 
 import { apiFetch, apiUpload } from '../api/client'
 import EmptyState from '../components/common/EmptyState.vue'
@@ -8,6 +12,19 @@ import PageHeader from '../components/common/PageHeader.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import StatusTag from '../components/common/StatusTag.vue'
 import type { KnowledgeBase, KnowledgeChunk, KnowledgeDocument, Model, ReindexOut, RetrieveOut } from '../api/types'
+import { formatKbError } from '../utils/runtime'
+
+use([RadarChart, RadarComponent, TooltipComponent, CanvasRenderer])
+
+type RetrieveQualityKey = 'vector' | 'keyword' | 'fusion' | 'coverage' | 'topLead'
+type RetrieveQualityMetric = {
+  key: RetrieveQualityKey
+  name: string
+  value: number
+  explanation: string
+  formula: string
+}
+type RadarOption = ComposeOption<RadarSeriesOption | RadarComponentOption | TooltipComponentOption>
 
 const kbs = ref<KnowledgeBase[]>([])
 const loading = ref(false)
@@ -27,6 +44,7 @@ const topK = ref(5)
 const scoreThreshold = ref(0)
 const retrieveMode = ref('hybrid')
 const rerankEnabled = ref(false)
+const qualityHelpActive = ref(['quality-help'])
 const activeKb = ref<KnowledgeBase | null>(null)
 const selectedKb = ref<KnowledgeBase | null>(null)
 const editingKb = ref<KnowledgeBase | null>(null)
@@ -41,6 +59,8 @@ const expandedChunkIds = ref<Set<string>>(new Set())
 const fileInput = ref<HTMLInputElement | null>(null)
 let documentPollingTimer: number | undefined
 const retrieveResult = ref<RetrieveOut | null>(null)
+const qualityChartRef = ref<HTMLDivElement | null>(null)
+let qualityChart: ECharts | null = null
 const resultChunks = computed(() => retrieveResult.value?.chunks || [])
 const resultCitations = computed(() => retrieveResult.value?.citations || [])
 const supportedFileAccept =
@@ -58,10 +78,11 @@ const chunkSummary = computed(() => {
   return { count, averageLength, method }
 })
 const selectedContextChunk = computed(() => contextChunks.value.find((chunk) => chunk.id === selectedContextChunkId.value) || null)
+const qualityMetrics = computed<RetrieveQualityMetric[]>(() => buildQualityMetrics())
 const form = ref({
-  name: 'Vue 测试知识库',
+  name: '企业资料知识库',
   type: 'doc_regulation',
-  description: '用于 Vue 工作台联调的知识库。',
+  description: '用于沉淀企业制度、流程、产品资料等问答依据。',
 })
 const settingsForm = ref({
   embedding_model: 'mock-embedding',
@@ -116,8 +137,8 @@ async function saveKbSettings() {
   const nextModel = settingsForm.value.embedding_model || 'mock-embedding'
   if (oldModel !== nextModel) {
     await ElMessageBox.confirm(
-      '仅空知识库允许更换 embedding 模型。已有文档的知识库会在后端拒绝切换，避免旧维度切片被孤立导致文档存在但检索不到。',
-      '确认更换 embedding 模型',
+      '仅未上传文档的知识库允许更换向量模型。已有文档后，模型和维度会锁定，以保证命中测试结果稳定。',
+      '确认更换向量模型',
       { confirmButtonText: '继续保存', cancelButtonText: '取消', type: 'warning' },
     )
   }
@@ -143,7 +164,7 @@ async function saveKbSettings() {
 
 async function reindexKb(kb: KnowledgeBase) {
   await ElMessageBox.confirm(
-    '重建索引会重新解析已完成文档，并使用当前 embedding 模型重新生成向量。重建期间旧索引仍保留，完成后替换。',
+    '重建会重新解析已完成文档，并按当前向量模型更新检索数据。重建期间原有资料仍可使用，完成后自动生效。',
     '确认重建索引',
     { confirmButtonText: '开始重建', cancelButtonText: '取消', type: 'warning' },
   )
@@ -357,18 +378,6 @@ function formatDate(value: string | null | undefined) {
   return new Date(value).toLocaleString()
 }
 
-function formatKbError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || '请求失败')
-  const map: Record<string, string> = {
-    kb_name_exists: '知识库名称已存在',
-    document_name_exists: '该知识库中已存在同名文档',
-    unsupported_document_type: '暂不支持该文件类型，请上传 txt、md、pdf 或 docx',
-    kb_not_found: '知识库不存在或已归档',
-    kb_embedding_model_locked_has_documents: '该知识库已有文档，embedding 模型和维度已锁定。请新建知识库并重新上传文档。',
-  }
-  return map[message] || message
-}
-
 function chunkTitle(index: number) {
   const citation = retrieveResult.value?.citations[index]
   return citation?.doc_name || `片段 ${index + 1}`
@@ -377,6 +386,153 @@ function chunkTitle(index: number) {
 function formatScore(value: number | null | undefined, digits = 3) {
   if (value == null) return '未命中该通道'
   return Number(value).toFixed(digits)
+}
+
+function formatQualityValue(value: number) {
+  return `${Math.round(value)}`
+}
+
+function buildQualityMetrics(): RetrieveQualityMetric[] {
+  const chunks = resultChunks.value
+  const vectorAverage = averageScore(chunks.map((chunk) => chunk.vector_score))
+  const textAverage = averageScore(chunks.map((chunk) => chunk.text_score))
+  const fusionAverage = averageScore(chunks.map((chunk) => chunk.score))
+  return [
+    {
+      key: 'vector',
+      name: '向量召回强度',
+      value: normalizeSimilarityScore(vectorAverage),
+      explanation: "问题与资料在语义层面的接近程度。越高说明'意思对得上'，措辞不同也能被找到。",
+      formula: '命中片段 vector_score 的平均值，并映射到 0-100。',
+    },
+    {
+      key: 'keyword',
+      name: '关键词匹配度',
+      value: normalizeSimilarityScore(textAverage),
+      explanation: "问题原词在资料中出现的程度。越高说明'字面对得上'；偏低时可改用资料里的术语提问。",
+      formula: '命中片段 text_score 的平均值，并映射到 0-100。',
+    },
+    {
+      key: 'fusion',
+      name: '融合置信度',
+      value: normalizeRrfScore(fusionAverage),
+      explanation: '综合语义与关键词后的整体排序可信度，反映综合检索的稳健程度。',
+      formula: '命中片段 RRF 融合分 score 的平均值，按理论最高值归一化。',
+    },
+    {
+      key: 'coverage',
+      name: '结果覆盖度',
+      value: clampPercent((chunks.length / Math.max(topK.value, 1)) * 100),
+      explanation: '这次是否召回了足够多相关片段。偏低说明资料稀疏、问题过窄或阈值过高，可下调阈值或补充资料。',
+      formula: '达到当前阈值的命中数 / 期望返回数 top_k。',
+    },
+    {
+      key: 'topLead',
+      name: 'Top1 领先度',
+      value: normalizeTopLead(chunks.map((chunk) => chunk.score)),
+      explanation: '最相关片段是否明显胜出。越高说明来源明确；偏低说明多个片段接近、可能存在歧义。',
+      formula: '最高综合分与第二名综合分的相对分差，并映射到 0-100。',
+    },
+  ]
+}
+
+function averageScore(values: Array<number | null | undefined>) {
+  const valid = values.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+  if (valid.length === 0) return null
+  return valid.reduce((total, value) => total + value, 0) / valid.length
+}
+
+function normalizeSimilarityScore(value: number | null) {
+  if (value == null) return 0
+  return clampPercent(value <= 1 ? value * 100 : value)
+}
+
+function normalizeRrfScore(value: number | null) {
+  if (value == null) return 0
+  const maxRrf = 2 / 61
+  return clampPercent((value / maxRrf) * 100)
+}
+
+function normalizeTopLead(values: Array<number | null | undefined>) {
+  const valid = values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value >= 0)
+  if (valid.length === 0) return 0
+  const [first, second = 0] = [...valid].sort((a, b) => b - a)
+  if (valid.length === 1) return 100
+  if (first <= 0) return 0
+  return clampPercent(((first - second) / first) * 100)
+}
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(100, value))
+}
+
+async function syncQualityChart() {
+  await nextTick()
+  if (!qualityChartRef.value || resultChunks.value.length === 0) {
+    disposeQualityChart()
+    return
+  }
+  if (!qualityChart) {
+    qualityChart = init(qualityChartRef.value)
+  }
+  const metrics = qualityMetrics.value
+  const option: RadarOption = {
+    tooltip: {
+      trigger: 'item',
+      formatter: () =>
+        metrics
+          .map((metric) => `${metric.name}：${formatQualityValue(metric.value)}<br/>${metric.explanation}`)
+          .join('<br/><br/>'),
+    },
+    radar: {
+      radius: '66%',
+      center: ['50%', '50%'],
+      splitNumber: 4,
+      axisName: {
+        color: '#4b5563',
+        fontSize: 12,
+      },
+      axisLine: {
+        lineStyle: { color: 'rgba(148, 163, 184, 0.42)' },
+      },
+      splitLine: {
+        lineStyle: { color: 'rgba(148, 163, 184, 0.28)' },
+      },
+      splitArea: {
+        areaStyle: {
+          color: ['rgba(37, 99, 235, 0.04)', 'rgba(37, 99, 235, 0.02)'],
+        },
+      },
+      indicator: metrics.map((metric) => ({ name: metric.name, max: 100 })),
+    },
+    series: [
+      {
+        name: '检索质量',
+        type: 'radar',
+        data: [
+          {
+            value: metrics.map((metric) => Math.round(metric.value)),
+            name: '本次命中测试',
+            areaStyle: { color: 'rgba(37, 99, 235, 0.18)' },
+            lineStyle: { color: '#2563eb', width: 2 },
+            itemStyle: { color: '#2563eb' },
+            symbolSize: 5,
+          },
+        ],
+      },
+    ],
+  }
+  qualityChart.setOption(option, true)
+}
+
+function resizeQualityChart() {
+  qualityChart?.resize()
+}
+
+function disposeQualityChart() {
+  qualityChart?.dispose()
+  qualityChart = null
 }
 
 function channelLabel(channel: string) {
@@ -401,8 +557,13 @@ function shouldShowVectorWarning() {
 
 onMounted(async () => {
   await Promise.all([loadKbs(), loadEmbeddingModels()])
+  window.addEventListener('resize', resizeQualityChart)
 })
-onUnmounted(stopDocumentPolling)
+onUnmounted(() => {
+  stopDocumentPolling()
+  window.removeEventListener('resize', resizeQualityChart)
+  disposeQualityChart()
+})
 
 watch(documentDrawerVisible, (visible) => {
   if (!visible) {
@@ -410,28 +571,30 @@ watch(documentDrawerVisible, (visible) => {
     clearChunks()
   }
 })
+
+watch(qualityMetrics, syncQualityChart, { deep: true })
 </script>
 
 <template>
   <section class="business-page">
-    <PageHeader title="知识库实验台" description="管理知识库并直接测试召回片段、来源和分数。">
+    <PageHeader title="知识库实验台" description="管理企业专属资料库，并用真实问题检验能否召回正确片段。">
       <template #actions>
         <el-button @click="loadKbs">刷新</el-button>
       </template>
     </PageHeader>
 
-    <div class="grid two">
+    <div class="kb-top-grid">
       <section class="panel-card">
-        <SectionHeader title="知识库列表" description="查看知识库状态并进入命中测试。" />
+        <SectionHeader title="知识库列表" description="查看企业专属资料库状态，并选择资料库进行命中测试。" />
         <el-table v-loading="loading" :data="kbs" border>
           <template #empty>
-            <EmptyState title="还没有知识库" description="创建知识库后可上传文档并进行召回测试。" action-text="创建知识库" @action="createKb" />
+            <EmptyState title="还没有知识库" description="请先创建企业专属资料库，再上传文档并进行命中测试。" action-text="创建知识库" @action="createKb" />
           </template>
           <el-table-column prop="name" label="名称" min-width="180" />
           <el-table-column prop="type" label="类型" width="140" />
-          <el-table-column prop="embedding_model" label="Embedding" width="180">
+          <el-table-column prop="embedding_model" label="向量模型" width="180">
             <template #default="{ row }">
-              <span class="mono-id">{{ row.embedding_model || 'mock-embedding' }}</span>
+              <span class="mono-id">{{ row.embedding_model || '未指定向量模型' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="维度" width="90">
@@ -456,7 +619,7 @@ watch(documentDrawerVisible, (visible) => {
       </section>
 
       <section class="panel-card">
-        <SectionHeader title="创建知识库" description="先创建知识库容器，再上传文档入库。" />
+        <SectionHeader title="创建知识库" description="先建立企业专属资料库，再上传制度、流程、产品资料等文档。" />
         <el-form label-position="top">
           <el-form-item label="名称">
             <el-input v-model="form.name" />
@@ -472,10 +635,10 @@ watch(documentDrawerVisible, (visible) => {
           </el-form-item>
           <el-form-item label="描述">
             <el-input v-model="form.description" type="textarea" :rows="4" />
-            <div class="field-help">用于区分业务范围，后续会显示在知识库详情中。</div>
+            <div class="field-help">用于说明该知识库覆盖的业务范围，便于后续选择和维护。</div>
           </el-form-item>
           <el-button type="primary" :loading="creating" @click="createKb">创建</el-button>
-          <div class="field-help">创建成功后会直接进入文档管理，可继续上传 txt、md、pdf 或 docx。</div>
+          <div class="field-help">创建成功后可继续上传文档，作为智能体回答问题的依据。</div>
         </el-form>
       </section>
     </div>
@@ -483,7 +646,7 @@ watch(documentDrawerVisible, (visible) => {
     <section class="panel-card mt">
       <SectionHeader
         title="命中测试实验台"
-        :description="activeKb ? `${activeKb.name} · 命中 ${resultChunks.length} 条片段` : '选择知识库后展示命中片段和来源。'"
+        :description="activeKb ? `${activeKb.name} · 命中 ${resultChunks.length} 条片段` : '选择知识库后，用真实问题检验是否能召回正确片段。'"
       />
       <div class="grid two">
         <aside class="stack">
@@ -491,11 +654,11 @@ watch(documentDrawerVisible, (visible) => {
             <el-form-item label="测试问题">
               <el-input v-model="query" type="textarea" :rows="4" />
             </el-form-item>
-            <el-form-item label="TopK">
+            <el-form-item label="召回数量">
               <el-slider v-model="topK" :min="1" :max="20" show-input />
             </el-form-item>
-            <el-form-item label="Score Threshold">
-              <div class="field-help">向量相似度阈值（仅过滤向量通道）；关键词-only 结果不受该阈值影响。</div>
+            <el-form-item label="相似度阈值">
+              <div class="field-help">用于过滤相关性较低的片段。数值越高，返回内容越严格。</div>
               <el-slider v-model="scoreThreshold" :min="0" :max="1" :step="0.05" show-input />
             </el-form-item>
             <el-form-item label="检索模式">
@@ -505,7 +668,7 @@ watch(documentDrawerVisible, (visible) => {
                 { label: '混合', value: 'hybrid' },
               ]" />
             </el-form-item>
-            <el-form-item label="Rerank">
+            <el-form-item label="结果重排">
               <el-switch v-model="rerankEnabled" active-text="开启" inactive-text="关闭" />
             </el-form-item>
             <el-button type="primary" :disabled="!activeKb" :loading="retrieving" @click="activeKb && retrieveKb(activeKb)">
@@ -517,23 +680,64 @@ watch(documentDrawerVisible, (visible) => {
         <div v-loading="retrieving" class="stack">
           <el-alert
             v-if="activeHasNoDoneDocuments"
-            title="该知识库还没有解析完成的文档，检索将无结果。"
+            title="该知识库还没有解析完成的文档，请先等待文档处理完成后再进行命中测试。"
             type="warning"
             :closable="false"
           />
+          <section class="quality-panel">
+            <SectionHeader title="检索质量雷达图" description="从语义、关键词、排序、覆盖和领先度五个维度概括本次命中测试质量。" />
+            <EmptyState
+              v-if="!retrieveResult || resultChunks.length === 0"
+              title="等待命中测试"
+              description="输入问题并开始命中测试后，这里会展示本次检索质量。"
+            />
+            <div v-else class="quality-layout">
+              <div class="quality-chart-wrap">
+                <div ref="qualityChartRef" class="quality-chart" />
+                <div class="quality-score-grid">
+                  <el-tooltip
+                    v-for="metric in qualityMetrics"
+                    :key="metric.key"
+                    :content="`${metric.formula} ${metric.explanation}`"
+                    placement="top"
+                  >
+                    <div class="quality-score-item">
+                      <span>{{ metric.name }}</span>
+                      <strong>{{ formatQualityValue(metric.value) }}</strong>
+                    </div>
+                  </el-tooltip>
+                </div>
+              </div>
+              <el-collapse v-model="qualityHelpActive" class="quality-help">
+                <el-collapse-item title="维度说明" name="quality-help">
+                  <dl>
+                    <div v-for="metric in qualityMetrics" :key="metric.key">
+                      <dt>
+                        <el-tooltip :content="metric.formula" placement="top">
+                          <span>{{ metric.name }}</span>
+                        </el-tooltip>
+                        <strong>{{ formatQualityValue(metric.value) }}</strong>
+                      </dt>
+                      <dd>{{ metric.explanation }}</dd>
+                    </div>
+                  </dl>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
+          </section>
           <EmptyState
             v-if="!retrieveResult"
-            title="还没有测试结果"
-            description="点击知识库列表中的“检索”，或选择知识库后开始测试。"
+            title="还没有命中测试结果"
+            description="请先在知识库列表中点击“检索”，或选择知识库后输入问题开始测试。"
           />
           <EmptyState
             v-else-if="resultChunks.length === 0"
-            title="没有检索到匹配片段"
-            description="可以调整问题、TopK 或阈值后再次测试。"
+            title="没有命中匹配片段"
+            description="请调整测试问题、召回数量或相似度阈值后再次测试。"
           />
           <el-alert
             v-if="shouldShowVectorWarning()"
-            title="未检索到高相关内容（最高向量相似度低于 0.5），可能知识库中没有该问题相关的资料，或可尝试调整问题表述。"
+            title="未命中高相关内容，可能知识库中缺少相关资料，或需要调整问题表述。"
             type="warning"
             :closable="false"
           />
@@ -542,7 +746,7 @@ watch(documentDrawerVisible, (visible) => {
               <strong>{{ chunk.doc_name || chunkTitle(index) }} · 切片 #{{ chunk.seq ?? '-' }}</strong>
               <StatusTag status="success" :label="`向量相似度 ${formatScore(chunk.vector_score)}`" />
               <StatusTag status="info" :label="`关键词分 ${formatScore(chunk.text_score)}`" />
-              <el-tooltip content="RRF 排名分用于融合向量和关键词召回，单通道第一名约 0.016，双通道第一名约 0.0328，不是相似度。">
+              <el-tooltip content="综合排序分用于辅助判断片段排序，主要供专业人员排查命中效果。">
                 <StatusTag status="neutral" :label="`RRF排名分 ${formatScore(chunk.score, 6)}`" />
               </el-tooltip>
               <StatusTag
@@ -554,15 +758,15 @@ watch(documentDrawerVisible, (visible) => {
               <span class="mono-id">{{ resultCitations[index]?.chunk_id || chunk.chunk_id || chunk.id }}</span>
             </div>
             <div class="field-help">内容长度：{{ chunk.content_length || chunk.content?.length || 0 }} 字符</div>
-            <p>{{ chunk.content || chunk.snippet || resultCitations[index]?.snippet || '后端返回了命中片段，但没有携带正文。' }}</p>
+            <p>{{ chunk.content || chunk.snippet || resultCitations[index]?.snippet || '已命中片段，但暂时没有可展示的正文。' }}</p>
             <el-button size="small" @click="openHitContext(chunk)">查看上下文</el-button>
           </article>
           <div v-if="retrieveResult" class="panel-card">
             <h3>调优建议</h3>
             <ul>
-              <li>低分召回时，先确认文档解析和切片是否完成。</li>
-              <li>业务问题较短时，可补充关键词或开启 query rewrite。</li>
-              <li>结果重复时，建议开启父子分块或 rerank。</li>
+              <li>命中分数较低时，先确认文档是否已完成解析。</li>
+              <li>业务问题较短时，可补充关键业务词后再次测试。</li>
+              <li>结果重复时，可调整资料切分方式或联系管理员优化知识库配置。</li>
             </ul>
           </div>
         </div>
@@ -578,7 +782,7 @@ watch(documentDrawerVisible, (visible) => {
       <section class="kb-docs-drawer">
         <SectionHeader
           title="文档列表"
-          description="上传文档后系统会自动解析、切片并入库。"
+          description="上传文档后，系统会自动处理并加入企业专属资料库。"
         >
           <template #actions>
             <el-button @click="selectedKb && loadDocumentsForKb(selectedKb.id)" :loading="documentsLoading">刷新</el-button>
@@ -595,7 +799,7 @@ watch(documentDrawerVisible, (visible) => {
         />
 
         <el-alert
-          title="支持 txt、md、pdf、docx；上传后会自动轮询解析状态，全部完成或失败后停止。"
+          title="支持 txt、md、pdf、docx 格式。上传后请等待处理完成，再进行命中测试。"
           type="info"
           :closable="false"
         />
@@ -604,7 +808,7 @@ watch(documentDrawerVisible, (visible) => {
           <template #empty>
             <EmptyState
               title="还没有文档"
-              description="上传 txt、pdf、md 或 docx 文档开始构建知识库。"
+              description="请上传企业资料文档，开始构建可供智能体引用的知识库。"
               action-text="上传文档"
               @action="triggerUpload"
             />
@@ -636,14 +840,14 @@ watch(documentDrawerVisible, (visible) => {
 
         <section class="chunk-panel">
           <SectionHeader
-            title="切片可视化"
-            :description="selectedChunkDocument ? selectedChunkDocument.name : '选择已完成解析的文档查看切片结果。'"
+            title="资料片段"
+            :description="selectedChunkDocument ? selectedChunkDocument.name : '选择已处理完成的文档，查看系统拆分出的资料片段。'"
           />
 
           <EmptyState
             v-if="!selectedChunkDocument"
             title="还没有选择文档"
-            description="点击文档列表中的“查看切片”，即可查看序号、长度、向量状态和内容全文。"
+            description="请在文档列表中点击“查看切片”，查看资料片段及其内容。"
           />
 
           <div v-else v-loading="chunksLoading" class="chunk-panel__body">
@@ -666,8 +870,8 @@ watch(documentDrawerVisible, (visible) => {
 
             <EmptyState
               v-if="!chunksLoading && documentChunks.length === 0"
-              title="该文档还没有切片"
-              description="文档可能尚未解析完成，或解析失败未生成切片。"
+              title="该文档还没有资料片段"
+              description="请等待文档处理完成；如长时间未生成，请重新上传或联系管理员检查文档。"
             />
 
             <article v-for="chunk in documentChunks" :key="chunk.id" class="chunk-card">
@@ -691,7 +895,7 @@ watch(documentDrawerVisible, (visible) => {
 
     <el-dialog v-model="kbSettingsVisible" title="知识库设置" width="520px">
       <el-form label-position="top">
-        <el-form-item label="Embedding 模型">
+        <el-form-item label="向量模型">
           <el-select v-model="settingsForm.embedding_model" filterable>
             <el-option
               v-for="model in embeddingModels"
@@ -701,11 +905,11 @@ watch(documentDrawerVisible, (visible) => {
             />
           </el-select>
           <div class="field-help">
-            仅空知识库允许更换 embedding 模型。已有文档后模型和维度会锁定；如需更换，请新建知识库并重新上传文档。
+            仅未上传文档的知识库允许更换向量模型。已有文档后模型和维度会锁定；如需更换，请新建知识库并重新上传文档。
           </div>
         </el-form-item>
         <el-alert
-          title="系统会按所选 embedding 模型的真实维度写入知识库，当前支持 1024 / 1536 / 3072 维。3072 维暂不建 HNSW 索引，适合小型知识库；大库建议选择 1024/1536 维或将 large 模型 dimensions 降到 2000 以内。DeepSeek 不提供 embedding。"
+          title="向量模型会影响知识库的检索效果。资料较多时，建议选择平台推荐的稳定模型；如不确定，请咨询管理员。"
           type="warning"
           :closable="false"
         />
@@ -725,7 +929,7 @@ watch(documentDrawerVisible, (visible) => {
         <EmptyState
           v-if="!contextLoading && contextChunks.length === 0"
           title="没有可展示的上下文"
-          description="当前命中切片没有找到相邻切片，或文档切片尚未生成。"
+          description="当前命中片段暂未找到相邻内容。可返回文档列表确认资料是否已处理完成。"
         />
         <article
           v-for="chunk in contextChunks"
@@ -745,3 +949,123 @@ watch(documentDrawerVisible, (visible) => {
     </el-dialog>
   </section>
 </template>
+
+<style scoped>
+.kb-top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+}
+
+.quality-panel {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-card);
+  padding: var(--space-4);
+}
+
+.quality-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(260px, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.quality-chart-wrap {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.quality-chart {
+  width: 100%;
+  height: 280px;
+}
+
+.quality-score-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.quality-score-item {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-muted);
+  padding: var(--space-2);
+  cursor: help;
+}
+
+.quality-score-item span {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quality-score-item strong {
+  color: var(--color-text-primary);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.quality-help :deep(.el-collapse-item__header) {
+  font-weight: 600;
+}
+
+.quality-help dl {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.quality-help dl > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.quality-help dt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.quality-help dt span {
+  cursor: help;
+}
+
+.quality-help dt strong {
+  color: var(--color-brand-primary);
+  font-weight: 700;
+}
+
+.quality-help dd {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-help);
+  line-height: 1.7;
+}
+
+@media (max-width: 1100px) {
+  .kb-top-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-score-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+</style>

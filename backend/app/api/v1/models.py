@@ -5,7 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_current_auth, require_perm
 from app.core.database import get_db
-from app.schemas.models import ModelChannelOut, ModelHubCreate, ModelHubOut, ModelHubUpdate, ModelStatusIn
+from app.schemas.models import (
+    ModelChannelOut,
+    ModelHubCreate,
+    ModelHubOut,
+    ModelHubUpdate,
+    ModelStatusIn,
+)
 from app.services.audit_service import write_audit
 from app.services.model_service import (
     create_model_hub_model,
@@ -52,7 +58,12 @@ async def list_model_hub_api(
     )
 
 
-@router.post("", response_model=ModelHubOut, status_code=status.HTTP_201_CREATED, summary="Create model")
+@router.post(
+    "",
+    response_model=ModelHubOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create model",
+)
 async def create_model_hub_api(
     payload: ModelHubCreate,
     request: Request,
@@ -60,7 +71,9 @@ async def create_model_hub_api(
     db: AsyncSession = Depends(get_db),
 ) -> ModelHubOut:
     try:
-        model = await create_model_hub_model(db, tenant_id=auth.tenant_id, payload=payload)
+        model = await create_model_hub_model(
+            db, tenant_id=auth.tenant_id, payload=payload
+        )
     except ValueError as exc:
         raise model_error(exc) from exc
     await write_audit(
@@ -84,7 +97,9 @@ async def get_model_hub_api(
 ) -> ModelHubOut:
     model = await get_model_hub_model(db, model_id)
     if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found"
+        )
     return model
 
 
@@ -101,7 +116,9 @@ async def update_model_hub_api(
     except ValueError as exc:
         raise model_error(exc) from exc
     if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -115,7 +132,9 @@ async def update_model_hub_api(
     return model
 
 
-@router.post("/{model_id}/status", response_model=ModelHubOut, summary="Set model status")
+@router.post(
+    "/{model_id}/status", response_model=ModelHubOut, summary="Set model status"
+)
 async def set_model_status_api(
     model_id: UUID,
     payload: ModelStatusIn,
@@ -123,9 +142,13 @@ async def set_model_status_api(
     auth: AuthContext = Depends(require_perm("maas:admin")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelHubOut:
-    model = await set_model_hub_status(db, model_id=model_id, is_active=payload.is_active)
+    model = await set_model_hub_status(
+        db, model_id=model_id, is_active=payload.is_active
+    )
     if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -139,7 +162,11 @@ async def set_model_status_api(
     return model
 
 
-@router.get("/{model_id}/channels", response_model=list[ModelChannelOut], summary="List model channels")
+@router.get(
+    "/{model_id}/channels",
+    response_model=list[ModelChannelOut],
+    summary="List model channels",
+)
 async def list_model_channels_api(
     model_id: UUID,
     auth: AuthContext = Depends(get_current_auth),
@@ -147,5 +174,7 @@ async def list_model_channels_api(
 ) -> list[ModelChannelOut]:
     model = await get_model_hub_model(db, model_id)
     if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found"
+        )
     return await list_model_channels(db, tenant_id=auth.tenant_id, model_id=model_id)

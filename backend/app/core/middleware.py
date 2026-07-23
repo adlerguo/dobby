@@ -53,7 +53,9 @@ class BodySizeLimitMiddleware:
                     return None
         return None
 
-    def _replay_receive(self, messages: list[Message]) -> Callable[[], Awaitable[Message]]:
+    def _replay_receive(
+        self, messages: list[Message]
+    ) -> Callable[[], Awaitable[Message]]:
         async def receive() -> Message:
             if messages:
                 return messages.pop(0)

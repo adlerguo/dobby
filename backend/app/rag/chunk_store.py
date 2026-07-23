@@ -26,9 +26,15 @@ def chunk_model_for_dim(dim: int | None) -> ChunkModel:
     raise ValueError(f"unsupported_embedding_dim:{normalized}")
 
 
-async def delete_document_chunks(db: AsyncSession, *, tenant_id: UUID, document_id: UUID) -> None:
+async def delete_document_chunks(
+    db: AsyncSession, *, tenant_id: UUID, document_id: UUID
+) -> None:
     for model in (Chunk1024, Chunk, Chunk3072):
-        await db.execute(delete(model).where(model.doc_id == document_id, model.tenant_id == tenant_id))
+        await db.execute(
+            delete(model).where(
+                model.doc_id == document_id, model.tenant_id == tenant_id
+            )
+        )
 
 
 async def delete_kb_document_chunks(
@@ -39,10 +45,14 @@ async def delete_kb_document_chunks(
     embedding_dim: int | None,
 ) -> None:
     model = chunk_model_for_dim(embedding_dim)
-    await db.execute(delete(model).where(model.doc_id == document_id, model.tenant_id == tenant_id))
+    await db.execute(
+        delete(model).where(model.doc_id == document_id, model.tenant_id == tenant_id)
+    )
 
 
-async def load_document_text_from_chunks(db: AsyncSession, *, tenant_id: UUID, document_id: UUID) -> str:
+async def load_document_text_from_chunks(
+    db: AsyncSession, *, tenant_id: UUID, document_id: UUID
+) -> str:
     parts: list[tuple[int | None, str]] = []
     for model in (Chunk1024, Chunk, Chunk3072):
         result = await db.execute(

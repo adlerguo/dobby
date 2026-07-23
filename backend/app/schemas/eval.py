@@ -13,7 +13,7 @@ class EvalCaseCreate(BaseModel):
     expected: str | None = None
     assert_type: str = Field(
         default="contains",
-        pattern=r"^(contains|not_contains|exact|citation_required|tool_success|latency_ms|always_pass)$",
+        pattern=r"^(contains|not_contains|exact|citation_required|tool_success|latency_ms|always_pass|semantic)$",
     )
     threshold: float | None = None
 
@@ -26,7 +26,7 @@ class EvalCaseUpdate(BaseModel):
     expected: str | None = None
     assert_type: str | None = Field(
         default=None,
-        pattern=r"^(contains|not_contains|exact|citation_required|tool_success|latency_ms|always_pass)$",
+        pattern=r"^(contains|not_contains|exact|citation_required|tool_success|latency_ms|always_pass|semantic)$",
     )
     threshold: float | None = None
 

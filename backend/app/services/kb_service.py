@@ -1,5 +1,6 @@
 from io import BytesIO
 from functools import partial
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import httpx
@@ -10,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.errors import ConflictError, DependencyError, ValidationError
 from app.core.maas_auth import maas_service_headers
 from app.core.storage import delete_object, upload_object
 from app.models import Document, KnowledgeBase, Model, ModelChannel
@@ -22,6 +24,15 @@ from app.services.validation import (
     ensure_tenant_name_available,
 )
 
+ALLOWED_UPLOAD_TYPES = {
+    ".txt": {"text/plain"},
+    ".md": {"text/markdown", "text/plain"},
+    ".pdf": {"application/pdf"},
+    ".docx": {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+}
+
 
 async def create_kb(
     db: AsyncSession,
@@ -31,13 +42,16 @@ async def create_kb(
     payload: KnowledgeBaseCreate,
 ) -> KnowledgeBase:
     repo = KnowledgeBaseRepository(db, tenant_id)
-    await ensure_tenant_name_available(
-        db,
-        model=KnowledgeBase,
-        tenant_id=tenant_id,
-        name=payload.name,
-        detail="kb_name_exists",
-    )
+    try:
+        await ensure_tenant_name_available(
+            db,
+            model=KnowledgeBase,
+            tenant_id=tenant_id,
+            name=payload.name,
+            detail="kb_name_exists",
+        )
+    except ValueError as exc:
+        raise ConflictError(code=str(exc)) from exc
     embedding_dim = await resolve_embedding_dim(
         db,
         tenant_id=tenant_id,
@@ -59,7 +73,9 @@ async def create_kb(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError(detail_from_integrity_error(exc, "kb_create_conflict")) from exc
+        raise ConflictError(
+            code=detail_from_integrity_error(exc, "kb_create_conflict")
+        ) from exc
     await db.refresh(kb)
     return kb
 
@@ -73,22 +89,27 @@ async def update_kb(
 ) -> KnowledgeBase | None:
     repo = KnowledgeBaseRepository(db, tenant_id)
     if payload.name is not None:
-        await ensure_tenant_name_available(
-            db,
-            model=KnowledgeBase,
-            tenant_id=tenant_id,
-            name=payload.name,
-            detail="kb_name_exists",
-            exclude_id=kb_id,
-        )
+        try:
+            await ensure_tenant_name_available(
+                db,
+                model=KnowledgeBase,
+                tenant_id=tenant_id,
+                name=payload.name,
+                detail="kb_name_exists",
+                exclude_id=kb_id,
+            )
+        except ValueError as exc:
+            raise ConflictError(code=str(exc)) from exc
     values = payload.model_dump(exclude_unset=True)
     if payload.embedding_model is not None:
         current_kb = await repo.get_by_id(kb_id)
         if current_kb is None:
             return None
         current_model = current_kb.embedding_model or "mock-embedding"
-        if payload.embedding_model != current_model and await kb_has_documents(db, tenant_id=tenant_id, kb_id=kb_id):
-            raise ValueError("kb_embedding_model_locked_has_documents")
+        if payload.embedding_model != current_model and await kb_has_documents(
+            db, tenant_id=tenant_id, kb_id=kb_id
+        ):
+            raise ConflictError(code="kb_embedding_model_locked_has_documents")
         values["embedding_dim"] = await resolve_embedding_dim(
             db,
             tenant_id=tenant_id,
@@ -101,7 +122,9 @@ async def update_kb(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError(detail_from_integrity_error(exc, "kb_update_conflict")) from exc
+        raise ConflictError(
+            code=detail_from_integrity_error(exc, "kb_update_conflict")
+        ) from exc
     await db.refresh(kb)
     return kb
 
@@ -127,10 +150,24 @@ async def upload_document(
     if kb is None or kb.status == "archived":
         return None
 
-    content = await file.read()
     mime = file.content_type or "application/octet-stream"
     filename = file.filename or "uploaded_file"
-    await ensure_document_name_available(db, tenant_id=tenant_id, kb_id=kb_id, name=filename)
+    validate_upload_type(filename, mime)
+    content = await file.read()
+    if len(content) > settings.upload_max_bytes:
+        raise ValidationError(
+            code="upload_file_too_large",
+            detail={
+                "max_bytes": settings.upload_max_bytes,
+                "actual_bytes": len(content),
+            },
+        )
+    try:
+        await ensure_document_name_available(
+            db, tenant_id=tenant_id, kb_id=kb_id, name=filename
+        )
+    except ValueError as exc:
+        raise ConflictError(code=str(exc)) from exc
     document_id = uuid4()
     object_name = f"tenants/{tenant_id}/kbs/{kb_id}/documents/{document_id}/{filename}"
     source_uri = await to_thread.run_sync(
@@ -160,12 +197,16 @@ async def upload_document(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError(detail_from_integrity_error(exc, "document_upload_conflict")) from exc
+        raise ConflictError(
+            code=detail_from_integrity_error(exc, "document_upload_conflict")
+        ) from exc
     await db.refresh(document)
     return document
 
 
-async def delete_document(db: AsyncSession, *, tenant_id: UUID, document_id: UUID) -> bool:
+async def delete_document(
+    db: AsyncSession, *, tenant_id: UUID, document_id: UUID
+) -> bool:
     repo = DocumentRepository(db, tenant_id)
     document = await repo.get_by_id(document_id)
     if document is None:
@@ -176,6 +217,19 @@ async def delete_document(db: AsyncSession, *, tenant_id: UUID, document_id: UUI
     await db.commit()
     await to_thread.run_sync(delete_object, document.source_uri)
     return True
+
+
+def validate_upload_type(filename: str, mime: str) -> None:
+    suffix = Path(filename).suffix.lower()
+    allowed_mimes = ALLOWED_UPLOAD_TYPES.get(suffix)
+    normalized_mime = (mime or "").split(";", 1)[0].strip().lower()
+    if allowed_mimes is None:
+        raise ValidationError(code="unsupported_document_type")
+    if normalized_mime not in allowed_mimes:
+        raise ValidationError(
+            code="unsupported_document_type",
+            detail={"filename": filename, "mime": normalized_mime},
+        )
 
 
 async def kb_has_documents(db: AsyncSession, *, tenant_id: UUID, kb_id: UUID) -> bool:
@@ -190,7 +244,9 @@ async def kb_has_documents(db: AsyncSession, *, tenant_id: UUID, kb_id: UUID) ->
     return result.scalar_one_or_none() is not None
 
 
-async def resolve_embedding_dim(db: AsyncSession, *, tenant_id: UUID, embedding_model: str) -> int:
+async def resolve_embedding_dim(
+    db: AsyncSession, *, tenant_id: UUID, embedding_model: str
+) -> int:
     result = await db.execute(
         select(ModelChannel.id)
         .join(Model, Model.id == ModelChannel.model_id)
@@ -206,7 +262,7 @@ async def resolve_embedding_dim(db: AsyncSession, *, tenant_id: UUID, embedding_
     )
     channel_id = result.scalar_one_or_none()
     if channel_id is None:
-        raise ValueError("no_active_model_channel")
+        raise ConflictError(code="no_active_model_channel")
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -217,13 +273,16 @@ async def resolve_embedding_dim(db: AsyncSession, *, tenant_id: UUID, embedding_
             response.raise_for_status()
             payload = response.json()
     except httpx.HTTPError as exc:
-        raise ValueError("maas_probe_failed") from exc
+        raise DependencyError(code="maas_probe_failed") from exc
 
     if payload.get("health") != "ok":
-        raise ValueError(payload.get("error") or "embedding_probe_failed")
+        raise DependencyError(code=payload.get("error") or "embedding_probe_failed")
     embedding_dim = payload.get("embedding_dim")
     if embedding_dim is None:
-        raise ValueError("embedding_dim_unknown")
+        raise ValidationError(code="embedding_dim_unknown")
     if int(embedding_dim) not in {1024, 1536, 3072}:
-        raise ValueError(f"unsupported_embedding_dim:{embedding_dim}")
+        raise ValidationError(
+            code="unsupported_embedding_dim",
+            detail={"embedding_dim": int(embedding_dim)},
+        )
     return int(embedding_dim)

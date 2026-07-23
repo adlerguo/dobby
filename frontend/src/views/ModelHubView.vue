@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Edit, Link, Plus, Refresh } from '@element-plus/icons-vue'
 
-import { apiFetch } from '../api/client'
+import { apiFetch, normalizeApiError } from '../api/client'
 import EmptyState from '../components/common/EmptyState.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
@@ -21,6 +21,7 @@ import type {
 
 const models = ref<ModelHub[]>([])
 const catalog = ref<ModelCatalog[]>([])
+const catalogTotal = ref(0)
 const channels = ref<ModelChannel[]>([])
 const loading = ref(false)
 const catalogLoading = ref(false)
@@ -36,7 +37,17 @@ const selectedModel = ref<ModelHub | null>(null)
 const selectedCatalog = ref<ModelCatalog | null>(null)
 const connectError = ref('')
 
-const modelTypes = [
+const catalogModelTypes = [
+  { label: 'LLM', value: 'llm' },
+  { label: 'Embedding', value: 'embedding' },
+  { label: 'Rerank', value: 'rerank' },
+  { label: '视觉多模态', value: 'vision' },
+  { label: '语音识别', value: 'asr' },
+  { label: '语音合成', value: 'tts' },
+  { label: '图像生成', value: 'image' },
+]
+
+const runtimeModelTypes = [
   { label: 'LLM', value: 'llm' },
   { label: 'Embedding', value: 'embedding' },
   { label: 'Rerank', value: 'rerank' },
@@ -91,18 +102,18 @@ function resetCreateForm() {
 }
 
 function friendlyError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
-  if (message.startsWith('connection_test_failed')) {
-    const summary = message.includes(':') ? message.split(':').slice(1).join(':').trim() : ''
-    return `连接测试失败，请检查 API Key 和地址${summary ? `（${summary}）` : ''}`
+  const parsed = normalizeApiError(error)
+  if (parsed.code === 'connection_test_failed') {
+    const summary = parsed.message !== parsed.code ? parsed.message : ''
+    return `连接测试失败，请检查访问密钥和服务地址${summary ? `（${summary}）` : ''}`
   }
-  if (message === 'no_active_model_channel') return '请先在模型中心配置模型 API 并测试连通'
-  if (message.startsWith('provider_http_')) return `供应商调用失败：${message}`
-  if (message === 'model_name_exists') return '模型名已存在'
-  if (message === 'model_channel_create_failed') return '默认渠道创建失败，请检查 MaaS 服务'
-  if (message === 'protocol_not_supported') return '该协议暂不支持一键接入'
-  if (message === 'model_type_not_supported') return '该模型类型暂不支持一键接入'
-  return message
+  if (parsed.code === 'no_active_model_channel') return '请先完成模型接入并启用至少一个模型'
+  if (parsed.code.startsWith('provider_http_')) return '模型服务暂时无法访问，请检查供应商服务状态或访问配置。'
+  if (parsed.code === 'model_name_exists') return '模型名已存在'
+  if (parsed.code === 'model_channel_create_failed') return '模型连接配置保存失败，请检查服务地址和访问密钥。'
+  if (parsed.code === 'protocol_not_supported') return '该协议暂不支持一键接入'
+  if (parsed.code === 'model_type_not_supported') return '该模型类型暂不支持一键接入'
+  return parsed.message
 }
 
 async function loadModels() {
@@ -127,6 +138,11 @@ async function loadCatalog() {
   }
 }
 
+async function loadCatalogTotal() {
+  const rows = await apiFetch<ModelCatalog[]>('/model-center/catalog')
+  catalogTotal.value = rows.length
+}
+
 async function refreshAll() {
   await Promise.all([loadModels(), loadCatalog()])
 }
@@ -137,7 +153,7 @@ async function createModel() {
     return
   }
   if (createForm.with_channel && (!createForm.base_url.trim() || !createForm.api_key.trim())) {
-    ElMessage.warning('请填写默认渠道地址和密钥')
+    ElMessage.warning('请填写服务地址和访问密钥')
     return
   }
   saving.value = true
@@ -222,6 +238,7 @@ async function openChannels(model: ModelHub) {
 }
 
 function openConnect(item: ModelCatalog) {
+  if (isCatalogOnly(item)) return
   selectedCatalog.value = item
   connectError.value = ''
   connectForm.runtime_name = item.model_code
@@ -244,11 +261,11 @@ async function connectCatalogModel() {
   if (!selectedCatalog.value) return
   connectError.value = ''
   if (!connectForm.runtime_name.trim()) {
-    connectError.value = '请填写内部模型名'
+    connectError.value = '请填写平台模型名称'
     return
   }
   if (!connectForm.api_key.trim()) {
-    connectError.value = '请填写 API Key'
+    connectError.value = '请填写访问密钥'
     return
   }
   connecting.value = true
@@ -267,7 +284,11 @@ async function connectCatalogModel() {
     connectDialog.value = false
     resetConnectForm()
     await loadModels()
-    ElMessage.success(result.test_result.ok ? '模型已接入，连接测试通过' : '模型已接入，但连接测试失败')
+    ElMessage.success(
+      result.test_result.ok
+        ? '模型已接入，连接测试通过。下一步：接入向量模型、创建知识库或创建智能体。'
+        : '模型已接入，但连通性测试未通过。请修复连接后再创建知识库或智能体。',
+    )
   } catch (error) {
     connectError.value = friendlyError(error)
   } finally {
@@ -300,8 +321,9 @@ function catalogAvailability(item: ModelCatalog) {
 function catalogAvailabilityLabel(item: ModelCatalog) {
   const availability = catalogAvailability(item)
   if (availability === 'verified_local') return '可直接体验'
-  if (availability === 'needs_real_key') return '需自备 API Key'
-  if (availability === 'demo_only') return '仅演示'
+  if (availability === 'needs_real_key') return '需提供访问密钥'
+  if (availability === 'demo_only') return '示例模型'
+  if (availability === 'catalog_only') return '即将支持接入'
   return availability || '待确认'
 }
 
@@ -309,8 +331,12 @@ function catalogAvailabilityType(item: ModelCatalog) {
   return catalogAvailability(item)
 }
 
+function isCatalogOnly(item: ModelCatalog) {
+  return catalogAvailability(item) === 'catalog_only'
+}
+
 function modelTypeLabel(value: string) {
-  const found = modelTypes.find((item) => item.value === value)
+  const found = catalogModelTypes.find((item) => item.value === value)
   return found?.label || value
 }
 
@@ -319,12 +345,14 @@ function formatContextWindow(value?: number | null) {
   return value >= 1000 ? `${Math.round(value / 1000)}K` : String(value)
 }
 
-onMounted(refreshAll)
+onMounted(async () => {
+  await Promise.all([refreshAll(), loadCatalogTotal()])
+})
 </script>
 
 <template>
   <section class="model-hub-page">
-    <PageHeader title="模型中心" description="统一维护模型目录、供应商接入、运行时模型和默认调用渠道。">
+    <PageHeader title="模型中心" description="完成模型接入，统一管理平台可调用的模型；部分多模态与音视频能力本期仅提供目录预览。">
       <template #actions>
         <el-button type="primary" :icon="Plus" @click="createDialog = true">新建模型</el-button>
       </template>
@@ -332,8 +360,8 @@ onMounted(refreshAll)
 
     <el-alert
       v-if="models.length === 0"
-      title="请先在模型中心配置模型 API 并测试连通"
-      description="生产模式不会默认返回 mock 假答案。请从模型广场选择 DeepSeek、OpenAI 或通义等真实模型，填入 API Key，通过连接测试后再创建智能体或知识库。"
+      title="请先完成模型接入"
+      description="从模型广场选择可适配模型，填写访问密钥并通过连接测试后，即可创建智能体或知识库。"
       type="warning"
       show-icon
       :closable="false"
@@ -341,29 +369,29 @@ onMounted(refreshAll)
 
     <div class="metric-grid model-metrics">
       <section class="panel-card stat-card">
-        <span>模型总数</span>
+        <span>可适配模型</span>
+        <strong>{{ catalogTotal }} 个</strong>
+      </section>
+      <section class="panel-card stat-card">
+        <span>已接入模型</span>
         <strong>{{ models.length }} 个</strong>
       </section>
       <section class="panel-card stat-card">
-        <span>启用模型</span>
+        <span>已启用模型</span>
         <strong>{{ activeCount }} 个</strong>
       </section>
       <section class="panel-card stat-card">
-        <span>模型类型</span>
-        <strong>{{ new Set(models.map((item) => item.type)).size }} 类</strong>
-      </section>
-      <section class="panel-card stat-card">
-        <span>供应商</span>
+        <span>覆盖供应商</span>
         <strong>{{ new Set(models.map((item) => item.provider || 'unknown')).size }} 个</strong>
       </section>
     </div>
 
     <section class="panel-card catalog-section">
-      <SectionHeader title="模型广场" description="查看可接入模型目录，填入密钥后先测试连接，通过后再启用模型。">
+      <SectionHeader title="模型广场" description="查看平台已支持对接的可适配模型，选择模型后填写访问密钥并完成模型接入。" >
         <template #actions>
           <div class="catalog-filters">
           <el-select v-model="catalogFilters.model_type" clearable placeholder="全部类型" @change="loadCatalog">
-            <el-option v-for="item in modelTypes" :key="item.value" :label="item.label" :value="item.value" />
+            <el-option v-for="item in catalogModelTypes" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
           <el-select v-model="catalogFilters.provider" clearable placeholder="全部供应商" @change="loadCatalog">
             <el-option v-for="item in catalogProviders" :key="item" :label="item" :value="item" />
@@ -381,7 +409,7 @@ onMounted(refreshAll)
             </div>
             <StatusTag :status="catalogAvailabilityType(item)" :label="catalogAvailabilityLabel(item)" />
           </div>
-          <p class="catalog-desc">{{ item.description || '暂无简介' }}</p>
+          <p class="catalog-desc">{{ item.description || '请查看模型名称和供应商信息，确认是否适合当前业务场景。' }}</p>
           <div class="catalog-meta">
             <span>{{ modelTypeLabel(item.model_type) }}</span>
             <span>{{ item.protocol }}</span>
@@ -392,19 +420,21 @@ onMounted(refreshAll)
             <el-tag v-if="item.supports_tools" size="small">工具</el-tag>
             <el-tag v-if="item.supports_vision" size="small">视觉</el-tag>
             <el-tag v-if="!item.supports_streaming && !item.supports_tools && !item.supports_vision" size="small" type="info">
-              基础调用
+              基础能力
             </el-tag>
           </div>
           <div class="catalog-footer">
             <span>{{ item.default_base_url }}</span>
-            <el-button size="small" type="primary" plain @click="openConnect(item)">接入使用</el-button>
+            <el-button size="small" type="primary" plain :disabled="isCatalogOnly(item)" @click="openConnect(item)">
+              {{ isCatalogOnly(item) ? '即将支持接入' : '接入使用' }}
+            </el-button>
           </div>
         </article>
         <EmptyState
           v-if="!catalogLoading && catalog.length === 0"
           class="catalog-empty"
-          title="没有匹配的模型目录"
-          description="当前筛选条件下没有可接入模型，可以清空类型或供应商筛选后再查看。"
+          title="没有匹配的可适配模型"
+          description="请清空类型或供应商筛选条件，继续查看平台支持对接的模型。"
           action-text="刷新目录"
           @action="loadCatalog"
         />
@@ -412,14 +442,14 @@ onMounted(refreshAll)
     </section>
 
     <section class="panel-card">
-      <SectionHeader title="已接入模型" description="维护运行时使用的逻辑模型和 MaaS 调用渠道。">
+      <SectionHeader title="已接入模型" description="查看已完成模型接入的模型，并管理哪些模型可直接调用。">
         <template #actions>
           <el-button :icon="Refresh" @click="refreshAll">刷新</el-button>
         </template>
       </SectionHeader>
       <el-table v-loading="loading" :data="models" border>
         <template #empty>
-          <EmptyState title="请先配置真实模型 API" description="生产模式不会静默返回 mock 假答案。请从模型广场接入真实供应商并完成连通性测试。" action-text="刷新模型广场" @action="loadCatalog" />
+          <EmptyState title="还没有已接入模型" description="请先从模型广场选择可适配模型，完成模型接入后再创建智能体或知识库。" action-text="查看模型广场" @action="loadCatalog" />
         </template>
         <el-table-column label="展示名" min-width="180">
           <template #default="{ row }">
@@ -439,7 +469,7 @@ onMounted(refreshAll)
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" :icon="Link" @click="openChannels(row)">渠道</el-button>
+            <el-button size="small" :icon="Link" @click="openChannels(row)">连接</el-button>
             <el-button
               size="small"
               :type="row.is_active === false ? 'success' : 'warning'"
@@ -455,14 +485,14 @@ onMounted(refreshAll)
     <el-dialog v-model="createDialog" title="新建模型" width="560px" @closed="resetCreateForm">
       <el-form label-width="110px">
         <el-form-item label="模型名" required>
-          <el-input v-model="createForm.name" placeholder="runtime 调用名，例如 ui-test-model" />
+          <el-input v-model="createForm.name" placeholder="平台内使用的模型名称" />
         </el-form-item>
         <el-form-item label="供应商">
           <el-input v-model="createForm.provider" placeholder="deepseek / openai / qwen" />
         </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="createForm.type" class="full-width-control">
-            <el-option v-for="item in modelTypes" :key="item.value" :label="item.label" :value="item.value" />
+            <el-option v-for="item in runtimeModelTypes" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="展示名">
@@ -471,14 +501,14 @@ onMounted(refreshAll)
         <el-form-item label="说明">
           <el-input v-model="createForm.description" type="textarea" :rows="3" />
         </el-form-item>
-        <el-form-item label="默认渠道">
+        <el-form-item label="同时启用">
           <el-switch v-model="createForm.with_channel" active-text="创建" inactive-text="暂不创建" />
         </el-form-item>
         <template v-if="createForm.with_channel">
-          <el-form-item label="渠道地址" required>
-            <el-input v-model="createForm.base_url" placeholder="https://api.deepseek.com 或供应商兼容地址" />
+          <el-form-item label="服务地址" required>
+            <el-input v-model="createForm.base_url" placeholder="供应商提供的服务地址" />
           </el-form-item>
-          <el-form-item label="密钥" required>
+          <el-form-item label="访问密钥" required>
             <el-input v-model="createForm.api_key" type="password" show-password autocomplete="new-password" />
           </el-form-item>
           <el-form-item label="权重">
@@ -517,7 +547,7 @@ onMounted(refreshAll)
           </div>
         </div>
         <el-alert
-          :title="`正在接入 ${modelTypeLabel(selectedCatalog.model_type)} 类型模型。知识库 Embedding 下拉只会显示 Embedding 类型，请确认没有从 LLM 目录项接入向量模型。`"
+          :title="`正在接入${modelTypeLabel(selectedCatalog.model_type)}。创建知识库时仅可选择向量模型，请确认所选模型类型符合用途。`"
           type="info"
           show-icon
           :closable="false"
@@ -532,20 +562,20 @@ onMounted(refreshAll)
           class="connect-error"
         />
         <el-form label-position="top" class="connect-form">
-          <el-form-item label="内部模型名" required>
-            <el-input v-model="connectForm.runtime_name" placeholder="智能体运行时选择的模型名" />
+          <el-form-item label="平台模型名称" required>
+            <el-input v-model="connectForm.runtime_name" placeholder="智能体选择模型时显示的名称" />
           </el-form-item>
           <el-form-item label="默认地址">
             <el-input :model-value="selectedCatalog.default_base_url" readonly />
-            <div class="field-help">来自模型目录的预置地址，不会保存密钥。</div>
+            <div class="field-help">平台根据模型目录自动带出，确认无误后即可继续。</div>
           </el-form-item>
-          <el-form-item label="覆盖地址">
+          <el-form-item label="自定义服务地址">
             <el-input v-model="connectForm.base_url" placeholder="不填则使用默认地址" />
-            <div class="field-help">私有网关或代理地址可在这里覆盖。</div>
+            <div class="field-help">如企业使用自有服务地址，可在这里填写。</div>
           </el-form-item>
-          <el-form-item label="API Key" required>
+          <el-form-item label="访问密钥" required>
             <el-input v-model="connectForm.api_key" type="password" show-password autocomplete="new-password" />
-            <div class="field-help">仅用于连接测试和 MaaS 加密保存，页面不会回显。</div>
+            <div class="field-help">访问密钥会加密保存，页面不会再次明文展示。</div>
           </el-form-item>
           <el-form-item label="权重">
             <el-input-number v-model="connectForm.weight" :min="1" :max="100" />
@@ -573,9 +603,9 @@ onMounted(refreshAll)
       </template>
     </el-dialog>
 
-    <el-drawer v-model="channelDrawer" :title="`${selectedModel ? displayName(selectedModel) : ''} · 渠道`" size="560px">
+    <el-drawer v-model="channelDrawer" :title="`${selectedModel ? displayName(selectedModel) : ''} · 连接配置`" size="560px">
       <el-table v-loading="channelLoading" :data="channels" border>
-        <el-table-column prop="base_url" label="渠道地址" min-width="220" />
+        <el-table-column prop="base_url" label="服务地址" min-width="220" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <StatusTag :status="row.status || 'unknown'" />

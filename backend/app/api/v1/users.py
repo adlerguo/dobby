@@ -22,11 +22,20 @@ async def list_users(
     auth: AuthContext = Depends(require_perm("user:view")),
     db: AsyncSession = Depends(get_db),
 ) -> list[User]:
-    result = await db.execute(select(User).where(User.tenant_id == auth.tenant_id).order_by(User.created_at.desc()))
+    result = await db.execute(
+        select(User)
+        .where(User.tenant_id == auth.tenant_id)
+        .order_by(User.created_at.desc())
+    )
     return list(result.scalars().all())
 
 
-@router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED, summary="Create user")
+@router.post(
+    "",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create user",
+)
 async def create_user(
     payload: UserCreate,
     request: Request,
@@ -36,11 +45,14 @@ async def create_user(
     result = await db.execute(
         select(User).where(
             User.tenant_id == auth.tenant_id,
-            func.lower(func.btrim(User.username)) == normalize_unique_text(payload.username),
+            func.lower(func.btrim(User.username))
+            == normalize_unique_text(payload.username),
         )
     )
     if result.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username_exists")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="username_exists"
+        )
 
     user = User(
         tenant_id=auth.tenant_id,
@@ -67,7 +79,11 @@ async def create_user(
         action="user.create",
         resource_type="user",
         resource_id=user.id,
-        detail={"username": user.username, "display_name": user.display_name, "email": user.email},
+        detail={
+            "username": user.username,
+            "display_name": user.display_name,
+            "email": user.email,
+        },
         request=request,
     )
     return user
@@ -79,10 +95,14 @@ async def get_user(
     auth: AuthContext = Depends(require_perm("user:view")),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    result = await db.execute(select(User).where(User.id == user_id, User.tenant_id == auth.tenant_id))
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.tenant_id == auth.tenant_id)
+    )
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found"
+        )
     return user
 
 
@@ -94,10 +114,14 @@ async def update_user(
     auth: AuthContext = Depends(require_perm("user:update")),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    result = await db.execute(select(User).where(User.id == user_id, User.tenant_id == auth.tenant_id))
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.tenant_id == auth.tenant_id)
+    )
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found"
+        )
 
     values = payload.model_dump(exclude_unset=True)
     if "username" in values:
@@ -105,11 +129,14 @@ async def update_user(
             select(User.id).where(
                 User.tenant_id == auth.tenant_id,
                 User.id != user_id,
-                func.lower(func.btrim(User.username)) == normalize_unique_text(values["username"]),
+                func.lower(func.btrim(User.username))
+                == normalize_unique_text(values["username"]),
             )
         )
         if result.scalar_one_or_none() is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username_exists")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="username_exists"
+            )
     for key, value in values.items():
         setattr(user, key, value)
 
@@ -143,15 +170,23 @@ async def assign_roles(
     auth: AuthContext = Depends(require_perm("user:assign_role")),
     db: AsyncSession = Depends(get_db),
 ) -> AssignRolesOut:
-    result = await db.execute(select(User).where(User.id == user_id, User.tenant_id == auth.tenant_id))
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.tenant_id == auth.tenant_id)
+    )
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found"
+        )
 
     try:
-        role_codes = await assign_role_codes(db, user.id, auth.tenant_id, payload.role_codes)
+        role_codes = await assign_role_codes(
+            db, user.id, auth.tenant_id, payload.role_codes
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
 
     await db.commit()
     await write_audit(

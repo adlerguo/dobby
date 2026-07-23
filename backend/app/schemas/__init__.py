@@ -1,9 +1,25 @@
-from app.schemas.agent_run import AgentRunIn, AgentRunOut, RuntimeToolCallIn, RuntimeToolCallOut
-from app.schemas.agents import AgentCreate, AgentOut, AgentTemplateOut, AgentUpdate, ModelOut
+from app.schemas.agent_run import (
+    AgentRunIn,
+    AgentRunOut,
+    RuntimeToolCallIn,
+    RuntimeToolCallOut,
+)
+from app.schemas.agents import (
+    AgentCreate,
+    AgentOut,
+    AgentTemplateOut,
+    AgentUpdate,
+    ModelOut,
+)
 from app.schemas.audit import AuditLogOut
 from app.schemas.auth import LoginIn, MeOut, RefreshIn, TokenOut
 from app.schemas.chat import ChatIn, ConversationOut, MessageOut
-from app.schemas.context import ContextBuildIn, ContextBuildOut, ContextMessageOut, ContextToolOut
+from app.schemas.context import (
+    ContextBuildIn,
+    ContextBuildOut,
+    ContextMessageOut,
+    ContextToolOut,
+)
 from app.schemas.dashboard import (
     DashboardExecutiveOut,
     DashboardMetricOut,
@@ -27,6 +43,7 @@ from app.schemas.kb import (
     DocumentChunkOut,
     DocumentOut,
     KnowledgeBaseCreate,
+    KnowledgeBaseHealthOut,
     KnowledgeBaseOut,
     KnowledgeBaseUpdate,
     ReindexOut,
@@ -55,7 +72,17 @@ from app.schemas.rbac import (
     UserOut,
     UserUpdate,
 )
-from app.schemas.tools import ToolCreate, ToolOut, ToolRunIn, ToolRunOut, ToolUpdate
+from app.schemas.tools import (
+    ToolBindIn,
+    ToolBindOut,
+    ToolCreate,
+    ToolDraftIn,
+    ToolDraftOut,
+    ToolOut,
+    ToolRunIn,
+    ToolRunOut,
+    ToolUpdate,
+)
 from app.schemas.workspaces import (
     WorkspaceCreate,
     WorkspaceOut,
@@ -106,6 +133,7 @@ __all__ = [
     "DocumentChunkOut",
     "CitationOut",
     "KnowledgeBaseCreate",
+    "KnowledgeBaseHealthOut",
     "KnowledgeBaseOut",
     "KnowledgeBaseUpdate",
     "ReindexOut",
@@ -125,6 +153,10 @@ __all__ = [
     "TraceDetailOut",
     "TraceSpanOut",
     "ToolCreate",
+    "ToolBindIn",
+    "ToolBindOut",
+    "ToolDraftIn",
+    "ToolDraftOut",
     "ToolOut",
     "ToolRunIn",
     "ToolRunOut",

@@ -47,7 +47,9 @@ def load_jieba():
         import jieba
     except Exception as exc:
         if not _jieba_warning_logged:
-            logger.warning("jieba unavailable; falling back to basic CJK tokenization: %s", exc)
+            logger.warning(
+                "jieba unavailable; falling back to basic CJK tokenization: %s", exc
+            )
             _jieba_warning_logged = True
         return None
     _jieba = jieba

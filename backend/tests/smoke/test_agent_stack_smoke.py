@@ -29,7 +29,9 @@ def require_env(name: str) -> str:
 
 
 def backend_url(path: str) -> str:
-    base_url = os.getenv("SMOKE_BACKEND_BASE_URL", "http://localhost:8000/api/v1").rstrip("/")
+    base_url = os.getenv(
+        "SMOKE_BACKEND_BASE_URL", "http://localhost:8000/api/v1"
+    ).rstrip("/")
     return f"{base_url}{path}"
 
 
@@ -37,17 +39,23 @@ def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {require_env('SMOKE_AUTH_TOKEN')}"}
 
 
-def tool_call_payload(tool_id: str, input_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def tool_call_payload(
+    tool_id: str, input_payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return {
         "query": "agent stack smoke test",
-        "tool_calls": [{"tool_id": tool_id, "input": input_payload or {"payload": "smoke"}}],
+        "tool_calls": [
+            {"tool_id": tool_id, "input": input_payload or {"payload": "smoke"}}
+        ],
     }
 
 
 @pytest.fixture(autouse=True)
 def skip_unless_enabled() -> None:
     if not smoke_enabled():
-        pytest.skip("set RUN_AGENT_STACK_SMOKE=1 to run compose integration smoke tests")
+        pytest.skip(
+            "set RUN_AGENT_STACK_SMOKE=1 to run compose integration smoke tests"
+        )
 
 
 def test_bound_tool_agent_non_stream_returns_200() -> None:
@@ -74,7 +82,9 @@ def test_bound_tool_agent_stream_receives_done() -> None:
     events: list[str] = []
 
     with httpx.Client(timeout=60.0) as client:
-        with client.stream("POST", backend_url("/chat"), headers=auth_headers(), json=payload) as response:
+        with client.stream(
+            "POST", backend_url("/chat"), headers=auth_headers(), json=payload
+        ) as response:
             assert response.status_code == 200, response.text
             for line in response.iter_lines():
                 if line.startswith("event: "):

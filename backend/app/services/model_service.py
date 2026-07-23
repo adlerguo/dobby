@@ -41,7 +41,9 @@ async def get_model_hub_model(db: AsyncSession, model_id: UUID) -> Model | None:
     return await db.get(Model, model_id)
 
 
-async def create_model_hub_model(db: AsyncSession, *, tenant_id: UUID, payload: ModelHubCreate) -> Model:
+async def create_model_hub_model(
+    db: AsyncSession, *, tenant_id: UUID, payload: ModelHubCreate
+) -> Model:
     await ensure_model_name_available(db, payload.name)
 
     if payload.default_channel is not None:
@@ -61,12 +63,16 @@ async def create_model_hub_model(db: AsyncSession, *, tenant_id: UUID, payload: 
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError(detail_from_integrity_error(exc, "model_create_conflict")) from exc
+        raise ValueError(
+            detail_from_integrity_error(exc, "model_create_conflict")
+        ) from exc
     await db.refresh(model)
     return model
 
 
-async def update_model_hub_model(db: AsyncSession, *, model_id: UUID, payload: ModelHubUpdate) -> Model | None:
+async def update_model_hub_model(
+    db: AsyncSession, *, model_id: UUID, payload: ModelHubUpdate
+) -> Model | None:
     model = await db.get(Model, model_id)
     if model is None:
         return None
@@ -78,12 +84,16 @@ async def update_model_hub_model(db: AsyncSession, *, model_id: UUID, payload: M
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError(detail_from_integrity_error(exc, "model_update_conflict")) from exc
+        raise ValueError(
+            detail_from_integrity_error(exc, "model_update_conflict")
+        ) from exc
     await db.refresh(model)
     return model
 
 
-async def set_model_hub_status(db: AsyncSession, *, model_id: UUID, is_active: bool) -> Model | None:
+async def set_model_hub_status(
+    db: AsyncSession, *, model_id: UUID, is_active: bool
+) -> Model | None:
     model = await db.get(Model, model_id)
     if model is None:
         return None
@@ -93,7 +103,9 @@ async def set_model_hub_status(db: AsyncSession, *, model_id: UUID, is_active: b
     return model
 
 
-async def list_model_channels(db: AsyncSession, *, tenant_id: UUID, model_id: UUID) -> list[ModelChannelOut]:
+async def list_model_channels(
+    db: AsyncSession, *, tenant_id: UUID, model_id: UUID
+) -> list[ModelChannelOut]:
     result = await db.execute(
         select(ModelChannel)
         .where(
@@ -102,11 +114,17 @@ async def list_model_channels(db: AsyncSession, *, tenant_id: UUID, model_id: UU
         )
         .order_by(ModelChannel.created_at.desc())
     )
-    return [ModelChannelOut.model_validate(channel) for channel in result.scalars().all()]
+    return [
+        ModelChannelOut.model_validate(channel) for channel in result.scalars().all()
+    ]
 
 
-async def ensure_model_name_available(db: AsyncSession, name: str, *, exclude_id: UUID | None = None) -> None:
-    stmt = select(Model.id).where(func.lower(func.btrim(Model.name)) == normalize_unique_text(name))
+async def ensure_model_name_available(
+    db: AsyncSession, name: str, *, exclude_id: UUID | None = None
+) -> None:
+    stmt = select(Model.id).where(
+        func.lower(func.btrim(Model.name)) == normalize_unique_text(name)
+    )
     if exclude_id is not None:
         stmt = stmt.where(Model.id != exclude_id)
     result = await db.execute(stmt.limit(1))
@@ -115,7 +133,11 @@ async def ensure_model_name_available(db: AsyncSession, name: str, *, exclude_id
 
 
 async def load_model_by_name(db: AsyncSession, name: str) -> Model | None:
-    result = await db.execute(select(Model).where(func.lower(func.btrim(Model.name)) == normalize_unique_text(name)))
+    result = await db.execute(
+        select(Model).where(
+            func.lower(func.btrim(Model.name)) == normalize_unique_text(name)
+        )
+    )
     return result.scalar_one_or_none()
 
 

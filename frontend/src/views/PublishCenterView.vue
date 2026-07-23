@@ -19,9 +19,26 @@ const publishing = ref(false)
 const creatingKey = ref(false)
 const keyDialog = ref(false)
 const oneTimeKey = ref('')
-const keyForm = ref({ name: '默认 API Key' })
+const keyForm = ref({ name: '默认访问密钥' })
 const selectedAgent = computed(() => agents.value.find((agent) => agent.id === selectedAgentId.value) || null)
 const selectedApp = computed(() => apps.value.find((app) => app.id === selectedAppId.value) || apps.value[0] || null)
+const openAiBaseUrl = computed(() => {
+  const appId = selectedApp.value?.id || '<app_id>'
+  return `${window.location.origin}/api/v1/public/apps/${appId}/openai/v1`
+})
+const openAiModel = computed(() => (selectedApp.value ? agentName(selectedApp.value.agent_id) : '<model>'))
+const openAiExample = computed(() => `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${openAiBaseUrl.value}",
+    api_key="${oneTimeKey.value || '<api_key>'}",
+)
+
+response = client.chat.completions.create(
+    model="${openAiModel.value}",
+    messages=[{"role": "user", "content": "请介绍这个应用能做什么"}],
+)
+print(response.choices[0].message.content)`)
 
 async function loadData() {
   loading.value = true
@@ -48,7 +65,7 @@ async function publishSelectedAgent() {
       method: 'POST',
       body: {
         agent_id: selectedAgent.value.id,
-        name: `${selectedAgent.value.name} API`,
+        name: `${selectedAgent.value.name} 外部应用`,
         publish_type: 'api',
         config: {},
       },
@@ -79,7 +96,7 @@ async function loadKeys(appId: string) {
 
 function openCreateKey(app: PublishedApp) {
   selectedAppId.value = app.id
-  keyForm.value.name = `${app.name} Key`
+  keyForm.value.name = `${app.name} 访问密钥`
   oneTimeKey.value = ''
   keyDialog.value = true
 }
@@ -94,7 +111,7 @@ async function createKey() {
     })
     oneTimeKey.value = created.api_key
     await loadKeys(selectedApp.value.id)
-    ElMessage.success('API Key 已生成')
+    ElMessage.success('访问密钥已生成')
   } catch (error) {
     ElMessage.error(formatPublishError(error))
   } finally {
@@ -120,6 +137,11 @@ async function copyOneTimeKey() {
   ElMessage.success('已复制')
 }
 
+async function copyOpenAiExample() {
+  await navigator.clipboard?.writeText(openAiExample.value)
+  ElMessage.success('调用示例已复制')
+}
+
 function agentName(agentId: string) {
   return agents.value.find((agent) => agent.id === agentId)?.name || agentId
 }
@@ -132,10 +154,10 @@ function formatDate(value?: string | null) {
 function formatPublishError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '请求失败')
   const map: Record<string, string> = {
-    agent_not_found: '智能体不存在或不属于当前租户。',
-    agent_not_publishable: '智能体需要先发布为可用状态，再发布成 API 应用。',
+    agent_not_found: '未找到该智能体，请刷新后重试。',
+    agent_not_publishable: '智能体需要先发布为可用状态，再发布为外部应用。',
     published_app_not_found: '发布应用不存在。',
-    published_app_not_active: '应用未发布，不能生成 API Key。',
+    published_app_not_active: '应用未发布，不能生成访问密钥。',
   }
   return map[message] || message
 }
@@ -145,17 +167,17 @@ onMounted(loadData)
 
 <template>
   <section class="page">
-    <PageHeader title="发布中心" description="把已调试通过的智能体发布为 API 应用，并管理外部调用 Key。">
+    <PageHeader title="发布中心" description="将已验证的智能体发布为外部应用，并管理访问密钥。">
       <template #actions>
         <el-button @click="loadData">刷新</el-button>
       </template>
     </PageHeader>
 
     <section class="panel-card">
-      <SectionHeader title="发布 API 应用" description="选择一个 active 智能体，生成可管理的 API 发布记录。">
+      <SectionHeader title="发布外部应用" description="选择一个已启用智能体，生成可管理的发布记录。">
         <template #actions>
         <el-button type="primary" :loading="publishing" :disabled="!selectedAgentId" @click="publishSelectedAgent">
-          发布为 API
+          发布为外部应用
         </el-button>
         </template>
       </SectionHeader>
@@ -177,16 +199,16 @@ onMounted(loadData)
     </section>
 
     <section class="panel-card">
-      <SectionHeader title="已发布应用" description="API Key 明文只在生成时展示一次，列表只显示前缀。" />
+      <SectionHeader title="已发布应用" description="访问密钥只在生成时完整展示一次，列表仅显示前缀。" />
       <el-table v-loading="loading" :data="apps" border>
         <template #empty>
-          <EmptyState title="还没有发布应用" description="选择一个可用智能体，将它发布为对外 API 应用。" />
+          <EmptyState title="还没有发布应用" description="请先选择一个已启用智能体，将它发布为外部应用。" />
         </template>
         <el-table-column prop="name" label="应用" min-width="180" />
         <el-table-column label="智能体" min-width="180">
           <template #default="{ row }">{{ agentName(row.agent_id) }}</template>
         </el-table-column>
-        <el-table-column prop="publish_type" label="渠道" width="100" />
+        <el-table-column prop="publish_type" label="发布方式" width="100" />
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
             <StatusTag :status="row.status" />
@@ -197,8 +219,8 @@ onMounted(loadData)
         </el-table-column>
         <el-table-column label="操作" width="240">
           <template #default="{ row }">
-            <el-button size="small" @click="openCreateKey(row)">生成 Key</el-button>
-            <el-button size="small" @click="loadKeys(row.id)">刷新 Key</el-button>
+            <el-button size="small" @click="openCreateKey(row)">生成密钥</el-button>
+            <el-button size="small" @click="loadKeys(row.id)">刷新密钥</el-button>
             <el-button v-if="row.status === 'published'" size="small" @click="unpublish(row)">下线</el-button>
           </template>
         </el-table-column>
@@ -206,13 +228,13 @@ onMounted(loadData)
     </section>
 
     <section class="panel-card">
-      <SectionHeader title="API Key 列表" description="只显示 Key 前缀，完整 Key 只在生成后展示一次。" />
-      <EmptyState v-if="apps.length === 0" title="暂无已发布应用" description="发布应用后即可生成和管理 API Key。" />
+      <SectionHeader title="访问密钥列表" description="这里只显示密钥前缀，完整密钥只在生成后展示一次。" />
+      <EmptyState v-if="apps.length === 0" title="还没有已发布应用" description="请先发布应用，再生成和管理访问密钥。" />
       <el-collapse v-else accordion>
         <el-collapse-item v-for="app in apps" :key="app.id" :title="`${app.name} · ${app.status}`" :name="app.id">
           <el-table :data="keysByApp[app.id] || []" border>
             <el-table-column prop="name" label="名称" min-width="160" />
-            <el-table-column label="Key 前缀" min-width="150">
+            <el-table-column label="密钥前缀" min-width="150">
               <template #default="{ row }">
                 <span class="mono-id">{{ row.key_prefix }}</span>
               </template>
@@ -240,23 +262,33 @@ onMounted(loadData)
       </el-collapse>
     </section>
 
-    <el-dialog v-model="keyDialog" title="生成 API Key" width="560px">
+    <el-dialog v-model="keyDialog" title="生成访问密钥" width="560px">
       <el-form label-position="top">
-        <el-form-item label="Key 名称">
+        <el-form-item label="密钥名称">
           <el-input v-model="keyForm.name" />
         </el-form-item>
       </el-form>
       <el-alert
         v-if="oneTimeKey"
-        title="API Key 明文只展示这一次。关闭弹窗后只能查看前缀，不能再次查看完整 Key。"
+        title="访问密钥只展示这一次。关闭弹窗后只能查看前缀，不能再次查看完整密钥。"
         type="warning"
         :closable="false"
         show-icon
       />
       <el-input v-if="oneTimeKey" v-model="oneTimeKey" class="mt one-time-key" readonly type="textarea" :rows="3" />
+      <section v-if="oneTimeKey" class="openai-example mt">
+        <SectionHeader title="OpenAI 兼容调用" description="按以下 base_url、api_key、model 接入现有 OpenAI SDK。" />
+        <div class="example-fields">
+          <div><span>base_url</span><code>{{ openAiBaseUrl }}</code></div>
+          <div><span>api_key</span><code>{{ oneTimeKey }}</code></div>
+          <div><span>model</span><code>{{ openAiModel }}</code></div>
+        </div>
+        <el-input :model-value="openAiExample" readonly type="textarea" :rows="9" />
+        <el-button class="mt" @click="copyOpenAiExample">复制调用示例</el-button>
+      </section>
       <template #footer>
         <el-button @click="keyDialog = false">关闭</el-button>
-        <el-button v-if="oneTimeKey" @click="copyOneTimeKey">复制 Key</el-button>
+        <el-button v-if="oneTimeKey" @click="copyOneTimeKey">复制密钥</el-button>
         <el-button v-else type="primary" :loading="creatingKey" @click="createKey">生成</el-button>
       </template>
     </el-dialog>

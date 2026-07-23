@@ -16,6 +16,7 @@ from app.api.v1.kbs import router as kbs_router
 from app.api.v1.model_catalog import router as model_catalog_router
 from app.api.v1.model_center import router as model_center_router
 from app.api.v1.models import router as models_router
+from app.api.v1.openai_compat import router as openai_compat_router
 from app.api.v1.publish import router as publish_router
 from app.api.v1.public_agents import router as public_agents_router
 from app.api.v1.rbac import router as rbac_router
@@ -24,6 +25,7 @@ from app.api.v1.tools import router as tools_router
 from app.api.v1.users import router as users_router
 from app.api.v1.workspaces import router as workspaces_router
 from app.core.config import settings
+from app.core.errors import AppError
 from app.core.middleware import BodySizeLimitMiddleware
 
 try:
@@ -40,10 +42,27 @@ app = FastAPI(
     version=settings.app_version,
     openapi_url="/api/v1/openapi.json",
 )
-app.add_middleware(BodySizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
+app.add_middleware(
+    BodySizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes
+)
 
 
-async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "detail": exc.detail,
+            }
+        },
+    )
+
+
+async def database_unavailable_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
     lines = str(exc).splitlines()
     first_line = lines[0] if lines else repr(exc)
     logger.error(
@@ -52,7 +71,9 @@ async def database_unavailable_handler(request: Request, exc: Exception) -> JSON
         first_line,
         request.url.path,
     )
-    logger.debug("database_unavailable traceback", exc_info=(type(exc), exc, exc.__traceback__))
+    logger.debug(
+        "database_unavailable traceback", exc_info=(type(exc), exc, exc.__traceback__)
+    )
     return JSONResponse(
         status_code=503,
         content={
@@ -62,6 +83,9 @@ async def database_unavailable_handler(request: Request, exc: Exception) -> JSON
             }
         },
     )
+
+
+app.add_exception_handler(AppError, app_error_handler)
 
 
 def database_exception_classes() -> Iterable[type[Exception]]:
@@ -91,6 +115,7 @@ app.include_router(model_center_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")
 app.include_router(publish_router, prefix="/api/v1")
 app.include_router(public_agents_router, prefix="/api/v1")
+app.include_router(openai_compat_router, prefix="/api/v1")
 app.include_router(tools_router, prefix="/api/v1")
 app.include_router(agents_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")

@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: eap
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d eap"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt pytest
+      - name: Run migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://app:pass@localhost:5432/eap
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-jwt-secret
+          MAAS_ADMIN_TOKEN: ci-maas-token
+        run: alembic upgrade head
+      - name: Run backend tests
+        env:
+          DATABASE_URL: postgresql+psycopg://app:pass@localhost:5432/eap
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-jwt-secret
+          MAAS_ADMIN_TOKEN: ci-maas-token
+        run: pytest backend/tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: npm run typecheck
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build smoke
+        run: docker compose build backend maas sandbox frontend

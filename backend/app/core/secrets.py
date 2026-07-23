@@ -7,10 +7,16 @@ from pathlib import Path
 WEAK_SECRET_VALUES = {"change-me", "change-me-32-byte-key", ""}
 
 
-def resolve_runtime_secret(*, env_name: str, file_name: str, label: str, configured_value: str | None = None) -> str:
-    env_value = configured_value if configured_value is not None else os.getenv(env_name)
+def resolve_runtime_secret(
+    *, env_name: str, file_name: str, label: str, configured_value: str | None = None
+) -> str:
+    env_value = (
+        configured_value if configured_value is not None else os.getenv(env_name)
+    )
     if env_value is not None:
-        return validate_runtime_secret(env_value, env_name=env_name, label=label, source="环境变量或 .env")
+        return validate_runtime_secret(
+            env_value, env_name=env_name, label=label, source="环境变量或 .env"
+        )
 
     secret_file = configured_secret_file(env_name=env_name, file_name=file_name)
     if secret_file.exists():
@@ -55,7 +61,9 @@ def configured_secret_file(*, env_name: str, file_name: str) -> Path:
     return Path(os.getenv("APP_SECRETS_DIR", "/data/secrets")) / file_name
 
 
-def validate_runtime_secret(value: str | None, *, env_name: str, label: str, source: str) -> str:
+def validate_runtime_secret(
+    value: str | None, *, env_name: str, label: str, source: str
+) -> str:
     normalized = (value or "").strip()
     if normalized in WEAK_SECRET_VALUES:
         print(

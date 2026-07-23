@@ -1,16 +1,19 @@
 <script setup lang="ts">
+import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
-import { apiFetch } from '../api/client'
+import { apiFetch, normalizeApiError } from '../api/client'
 import EmptyState from '../components/common/EmptyState.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import StatusTag from '../components/common/StatusTag.vue'
+import { useAgentsStore } from '../stores/agents'
 import type { Agent, AgentRagConfig, AgentTemplate, KnowledgeBase, Model } from '../api/types'
 
-const agents = ref<Agent[]>([])
+const agentsStore = useAgentsStore()
+const { agents } = storeToRefs(agentsStore)
 const templates = ref<AgentTemplate[]>([])
 const models = ref<Model[]>([])
 const kbs = ref<KnowledgeBase[]>([])
@@ -37,6 +40,7 @@ const form = ref({
 })
 const editVisible = ref(false)
 const editingAgent = ref<Agent | null>(null)
+const createdAgentId = ref('')
 const editForm = ref({
   name: '',
   template_id: '',
@@ -56,12 +60,11 @@ async function loadData() {
   loading.value = true
   try {
     const [agentRows, templateRows, modelRows, kbRows] = await Promise.all([
-      apiFetch<Agent[]>('/agents'),
+      agentsStore.fetchAgents(),
       apiFetch<AgentTemplate[]>('/agent-templates'),
       apiFetch<Model[]>('/models'),
       apiFetch<KnowledgeBase[]>('/kbs'),
     ])
-    agents.value = agentRows
     templates.value = templateRows
     models.value = modelRows
     kbs.value = kbRows
@@ -82,7 +85,7 @@ async function loadData() {
 async function createAgent() {
   creating.value = true
   try {
-    await apiFetch<Agent>('/agents', {
+    const created = await apiFetch<Agent>('/agents', {
       method: 'POST',
       body: {
         name: form.value.name,
@@ -99,9 +102,12 @@ async function createAgent() {
         },
       },
     })
+    agentsStore.upsertAgent(created)
+    createdAgentId.value = created.id
     ElMessage.success('智能体已创建')
     await loadData()
     activeStep.value = 3
+    await router.push(`/chat?agent_id=${created.id}`)
   } catch (error) {
     ElMessage.error(formatAgentError(error))
   } finally {
@@ -116,14 +122,32 @@ function selectTemplate(template: AgentTemplate) {
   activeStep.value = 1
 }
 
+function createBlankAgent() {
+  form.value.template_id = ''
+  form.value.type = 'qa'
+  activeStep.value = 1
+}
+
 function goTemplateGallery() {
   router.push('/templates')
 }
 
 async function publishAgent(agent: Agent) {
   try {
-    await apiFetch<Agent>(`/agents/${agent.id}/publish`, { method: 'POST', body: {} })
+    const updated = await apiFetch<Agent>(`/agents/${agent.id}/publish`, { method: 'POST', body: {} })
+    agentsStore.upsertAgent(updated)
     ElMessage.success('智能体已发布')
+    await loadData()
+  } catch (error) {
+    ElMessage.error(formatAgentError(error))
+  }
+}
+
+async function deleteAgent(agent: Agent) {
+  try {
+    await apiFetch<null>(`/agents/${agent.id}`, { method: 'DELETE' })
+    agentsStore.removeAgent(agent.id)
+    ElMessage.success('智能体已删除')
     await loadData()
   } catch (error) {
     ElMessage.error(formatAgentError(error))
@@ -171,7 +195,7 @@ async function updateAgent() {
   updating.value = true
   try {
     const existingConfig = editingAgent.value.config || {}
-    await apiFetch<Agent>(`/agents/${editingAgent.value.id}`, {
+    const updated = await apiFetch<Agent>(`/agents/${editingAgent.value.id}`, {
       method: 'PATCH',
       body: {
         name: editForm.value.name,
@@ -186,6 +210,7 @@ async function updateAgent() {
         },
       },
     })
+    agentsStore.upsertAgent(updated)
     ElMessage.success('智能体配置已更新')
     editVisible.value = false
     await loadData()
@@ -203,14 +228,15 @@ function defaultAgentName() {
 }
 
 function formatAgentError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || '请求失败')
+  const parsed = normalizeApiError(error)
   const map: Record<string, string> = {
     agent_name_exists: '智能体名称已存在，请换一个名称后重试。',
     model_not_found: '模型不存在，请重新选择模型。',
     agent_template_not_found: '模板不存在，请重新选择模板。',
     agent_template_type_mismatch: '模板类型和智能体类型不一致，请重新选择模板。',
+    not_found: '智能体不存在或已归档。',
   }
-  return map[message] || message
+  return map[parsed.code] || parsed.message
 }
 
 onMounted(loadData)
@@ -218,8 +244,9 @@ onMounted(loadData)
 
 <template>
   <section class="business-page">
-    <PageHeader title="智能体工厂" description="围绕“选模板、填信息、配能力、进调试”的路径创建业务助手。">
+    <PageHeader title="智能体工厂" description="创建面向某类业务任务的 AI 助手，并为其配置模型、知识库与工具能力。">
       <template #actions>
+        <el-button @click="router.push('/factory')">进入智能体工厂</el-button>
         <el-button @click="goTemplateGallery">模板广场</el-button>
         <el-button type="primary" @click="activeTab = 'create'">创建智能体</el-button>
       </template>
@@ -231,14 +258,14 @@ onMounted(loadData)
     </el-tabs>
 
     <section v-if="activeTab === 'list'" class="panel-card">
-        <SectionHeader title="智能体列表" description="查看、编辑和发布当前租户下的业务智能体。">
+        <SectionHeader title="智能体列表" description="查看、编辑和发布当前企业已创建的智能体。">
           <template #actions>
             <el-button @click="loadData">刷新</el-button>
           </template>
         </SectionHeader>
         <el-table v-loading="loading" :data="agents" border>
           <template #empty>
-            <EmptyState title="还没有智能体" description="可以从模板开始创建第一个业务助手，并挂载模型、知识库和工具。" action-text="创建智能体" @action="activeTab = 'create'" />
+            <EmptyState title="还没有智能体" description="请从模板或空白配置开始，创建第一个面向业务任务的 AI 助手。" action-text="创建智能体" @action="activeTab = 'create'" />
           </template>
           <el-table-column prop="name" label="名称" min-width="180" />
           <el-table-column prop="type" label="类型" width="120" />
@@ -250,29 +277,57 @@ onMounted(loadData)
           <el-table-column label="绑定" width="140">
             <template #default="{ row }">{{ row.kb_ids?.length || 0 }} KB / {{ row.tool_ids?.length || 0 }} 工具</template>
           </el-table-column>
-          <el-table-column label="操作" width="180">
+          <el-table-column label="操作" width="220">
             <template #default="{ row }">
               <el-button size="small" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="row.status !== 'active'" size="small" @click="publishAgent(row)">发布</el-button>
               <StatusTag v-else status="active" label="可用" />
+              <el-popconfirm title="确定删除这个智能体吗？" confirm-button-text="删除" cancel-button-text="取消" @confirm="deleteAgent(row)">
+                <template #reference>
+                  <el-button size="small" type="danger" text>删除</el-button>
+                </template>
+              </el-popconfirm>
             </template>
           </el-table-column>
         </el-table>
       </section>
 
     <section v-else class="panel-card">
-        <SectionHeader title="创建智能体" description="按步骤完成模板、基础信息和能力配置。" />
+        <SectionHeader title="创建智能体" description="按步骤选择创建方式、填写基础信息，并配置模型、知识库与工具能力。" />
         <el-steps :active="activeStep" finish-status="success" simple>
           <el-step title="选择模板" />
           <el-step title="基础信息" />
           <el-step title="能力配置" />
-          <el-step title="进入调试" />
+          <el-step title="验证效果" />
         </el-steps>
 
+        <div v-if="activeStep === 0" class="wizard-step-intro mt">
+          <h3>选择模板</h3>
+          <p>选择一个场景模板快速开始，或从空白自定义创建。</p>
+        </div>
+
         <div v-if="activeStep === 0" class="template-grid mt">
+          <article
+            class="template-card blank-template-card"
+            role="button"
+            tabindex="0"
+            @click="createBlankAgent"
+            @keydown.enter.prevent="createBlankAgent"
+            @keydown.space.prevent="createBlankAgent"
+          >
+            <div>
+              <h3>从空白创建</h3>
+              <p>不使用模板，自行配置名称、类型、提示词、知识库与工具能力。</p>
+            </div>
+            <div class="tag-row">
+              <el-tag effect="plain" type="success">自定义</el-tag>
+              <el-tag effect="plain">无模板</el-tag>
+            </div>
+            <el-button type="primary" @click.stop="createBlankAgent">从空白创建</el-button>
+          </article>
           <article v-for="template in templates" :key="template.id" class="template-card">
             <h3>{{ template.name }}</h3>
-            <p>{{ template.persona || template.default_config?.persona || '快速创建一个业务智能体。' }}</p>
+            <p>{{ template.persona || template.default_config?.persona || '快速创建一个面向业务任务的 AI 助手。' }}</p>
             <div class="tag-row">
               <el-tag effect="plain">{{ template.type }}</el-tag>
               <el-tag effect="plain">模板</el-tag>
@@ -285,7 +340,7 @@ onMounted(loadData)
           <template v-if="activeStep === 1">
           <el-form-item label="智能体名称">
             <el-input v-model="form.name" />
-            <div class="field-help">名称在当前租户内不能重复。</div>
+            <div class="field-help">名称用于区分不同智能体，在当前企业内不能重复。</div>
           </el-form-item>
           <el-form-item label="类型">
             <el-select v-model="form.type">
@@ -307,7 +362,7 @@ onMounted(loadData)
             <el-select v-model="form.model_id" clearable>
               <el-option v-for="model in models" :key="model.id" :label="model.name" :value="model.id" />
             </el-select>
-            <div class="field-help">模型来自模型中心的已接入模型。</div>
+            <div class="field-help">请选择模型中心中已经完成模型接入的模型。</div>
           </el-form-item>
           <el-form-item label="知识库">
             <el-select v-model="form.kb_ids" multiple clearable collapse-tags collapse-tags-tooltip placeholder="选择要挂载的知识库">
@@ -318,15 +373,15 @@ onMounted(loadData)
                 :value="kb.id"
               />
             </el-select>
-            <div class="field-help">可多选，运行时会按召回参数注入上下文。</div>
+            <div class="field-help">可选择一个或多个企业专属资料库，作为智能体回答问题的依据。</div>
           </el-form-item>
           <el-collapse>
             <el-collapse-item title="基础召回参数" name="rag">
               <div class="grid two">
-                <el-form-item label="TopK">
+                <el-form-item label="召回数量">
                   <el-input-number v-model="form.rag.top_k" :min="1" :max="20" />
                 </el-form-item>
-                <el-form-item label="Score Threshold">
+                <el-form-item label="相似度阈值">
                   <el-input-number v-model="form.rag.score_threshold" :min="0" :max="1" :step="0.05" />
                 </el-form-item>
               </div>
@@ -339,7 +394,7 @@ onMounted(loadData)
               </el-form-item>
             </el-collapse-item>
           </el-collapse>
-          <el-form-item label="人设">
+          <el-form-item label="角色设定">
             <el-input v-model="form.persona" type="textarea" :rows="4" />
           </el-form-item>
           <el-form-item label="结构化回答">
@@ -348,21 +403,23 @@ onMounted(loadData)
               active-text="开启"
               inactive-text="关闭"
             />
-            <div class="field-help">开启后平台会注入统一回答规范：结论先行、表格对比、步骤编号、命令配置用代码块。</div>
+            <div class="field-help">开启后，智能体会优先采用结论先行、表格对比、步骤编号等清晰的回答方式。</div>
           </el-form-item>
-          <el-alert title="当前创建的是草稿配置，完成后会直接进入调试，不影响线上版本。" type="info" :closable="false" />
+          <el-alert title="创建后可先在对话中验证效果，确认无误后再发布给业务人员使用。" type="info" :closable="false" />
           </template>
           <template v-if="activeStep === 3">
-            <el-result icon="success" title="智能体已创建" sub-title="下一步进入调试对话，验证提示词、知识库和引用质量。">
+            <el-result icon="success" title="智能体已创建" sub-title="下一步进入对话验证，检查回答内容、知识库命中测试和引用质量。">
               <template #extra>
-                <el-button type="primary" @click="router.push('/chat')">进入调试</el-button>
+                <el-button type="primary" @click="router.push(`/chat?agent_id=${createdAgentId}`)">立即测试</el-button>
+                <el-button @click="router.push('/kbs')">配置知识库</el-button>
+                <el-button @click="router.push('/publish')">发布</el-button>
               </template>
             </el-result>
           </template>
           <div v-if="activeStep < 3" class="form-actions mt">
             <el-button :disabled="activeStep === 0" @click="activeStep--">上一步</el-button>
             <el-button v-if="activeStep < 2" type="primary" @click="activeStep++">下一步</el-button>
-            <el-button v-else type="primary" :loading="creating" @click="createAgent">创建并调试</el-button>
+            <el-button v-else type="primary" :loading="creating" @click="createAgent">创建并验证</el-button>
           </div>
         </el-form>
       </section>
@@ -387,15 +444,15 @@ onMounted(loadData)
               :value="kb.id"
             />
           </el-select>
-          <div class="field-help">保存后新对话会使用更新后的知识库绑定。</div>
+          <div class="field-help">保存后，新的对话将使用更新后的知识库配置。</div>
         </el-form-item>
         <el-collapse>
           <el-collapse-item title="基础召回参数" name="rag">
             <div class="grid two">
-              <el-form-item label="TopK">
+              <el-form-item label="召回数量">
                 <el-input-number v-model="editForm.rag.top_k" :min="1" :max="20" />
               </el-form-item>
-              <el-form-item label="Score Threshold">
+              <el-form-item label="相似度阈值">
                 <el-input-number v-model="editForm.rag.score_threshold" :min="0" :max="1" :step="0.05" />
               </el-form-item>
             </div>
@@ -408,7 +465,7 @@ onMounted(loadData)
             </el-form-item>
           </el-collapse-item>
         </el-collapse>
-        <el-form-item label="人设">
+        <el-form-item label="角色设定">
           <el-input v-model="editForm.persona" type="textarea" :rows="4" />
         </el-form-item>
         <el-form-item label="结构化回答">
@@ -417,7 +474,7 @@ onMounted(loadData)
             active-text="开启"
             inactive-text="关闭"
           />
-          <div class="field-help">关闭后系统提示词不再追加平台统一回答风格规范。</div>
+          <div class="field-help">关闭后，智能体将更多遵循原始角色设定回答。</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -427,3 +484,33 @@ onMounted(loadData)
     </el-dialog>
   </section>
 </template>
+
+<style scoped>
+.wizard-step-intro h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-section-title);
+  font-weight: 600;
+}
+
+.wizard-step-intro p {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-tertiary);
+}
+
+.blank-template-card {
+  border-color: rgba(37, 99, 235, 0.28);
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.08), rgba(255, 255, 255, 0.96));
+  cursor: pointer;
+}
+
+.blank-template-card:hover {
+  border-color: rgba(37, 99, 235, 0.48);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.blank-template-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline-offset: 2px;
+}
+</style>

@@ -53,7 +53,9 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("create index ix_app_api_keys_tenant_app on app_api_keys(tenant_id, app_id)")
+    op.execute(
+        "create index ix_app_api_keys_tenant_app on app_api_keys(tenant_id, app_id)"
+    )
     op.execute("create index ix_app_api_keys_status on app_api_keys(status)")
 
 

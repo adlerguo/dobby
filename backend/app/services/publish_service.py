@@ -37,7 +37,9 @@ async def create_published_app(
     return app
 
 
-async def list_published_apps(db: AsyncSession, *, tenant_id: UUID) -> list[PublishedApp]:
+async def list_published_apps(
+    db: AsyncSession, *, tenant_id: UUID
+) -> list[PublishedApp]:
     result = await db.execute(
         select(PublishedApp)
         .where(PublishedApp.tenant_id == tenant_id)
@@ -46,14 +48,20 @@ async def list_published_apps(db: AsyncSession, *, tenant_id: UUID) -> list[Publ
     return list(result.scalars().all())
 
 
-async def get_published_app(db: AsyncSession, *, tenant_id: UUID, app_id: UUID) -> PublishedApp | None:
+async def get_published_app(
+    db: AsyncSession, *, tenant_id: UUID, app_id: UUID
+) -> PublishedApp | None:
     result = await db.execute(
-        select(PublishedApp).where(PublishedApp.id == app_id, PublishedApp.tenant_id == tenant_id)
+        select(PublishedApp).where(
+            PublishedApp.id == app_id, PublishedApp.tenant_id == tenant_id
+        )
     )
     return result.scalar_one_or_none()
 
 
-async def unpublish_app(db: AsyncSession, *, tenant_id: UUID, app_id: UUID) -> PublishedApp | None:
+async def unpublish_app(
+    db: AsyncSession, *, tenant_id: UUID, app_id: UUID
+) -> PublishedApp | None:
     app = await get_published_app(db, tenant_id=tenant_id, app_id=app_id)
     if app is None:
         return None
@@ -96,7 +104,9 @@ async def create_app_api_key(
     return key, raw_key
 
 
-async def list_app_api_keys(db: AsyncSession, *, tenant_id: UUID, app_id: UUID) -> list[AppApiKey] | None:
+async def list_app_api_keys(
+    db: AsyncSession, *, tenant_id: UUID, app_id: UUID
+) -> list[AppApiKey] | None:
     if await get_published_app(db, tenant_id=tenant_id, app_id=app_id) is None:
         return None
     result = await db.execute(

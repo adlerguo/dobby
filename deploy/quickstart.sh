@@ -8,12 +8,21 @@ echo "启动 6qiyeagent 全栈服务..."
 docker compose up -d --build postgres redis minio maas sandbox backend frontend
 
 echo "等待 backend 就绪..."
+backend_ready=false
 for _ in $(seq 1 60); do
   if curl -fsS http://localhost:8001/healthz >/dev/null 2>&1; then
+    backend_ready=true
     break
   fi
   sleep 2
 done
+if [[ "$backend_ready" != "true" ]]; then
+  echo "backend 在 120 秒内未就绪。请按以下命令排查："
+  echo "- docker compose ps"
+  echo "- docker compose logs backend"
+  echo "- curl -v http://localhost:8001/healthz"
+  exit 1
+fi
 
 echo "执行数据库迁移..."
 docker compose exec -T backend alembic upgrade head

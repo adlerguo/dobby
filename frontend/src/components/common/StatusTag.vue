@@ -48,8 +48,8 @@ const text = computed(() => {
     unpublished: '未发布',
     draft: '草稿',
     verified_local: '可直接体验',
-    needs_real_key: '需自备 API Key',
-    demo_only: '演示模型（非真实）',
+    needs_real_key: '需提供访问密钥',
+    demo_only: '示例模型',
   }
   return labels[value] || String(props.status || '未知')
 })

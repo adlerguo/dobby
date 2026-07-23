@@ -12,7 +12,9 @@ ALLOWED_TABLES = {"work_orders"}
 
 
 def test_validate_select_sql_allows_plain_select_and_adds_limit():
-    sql = validate_select_sql("SELECT task_id FROM work_orders", allowed_tables=ALLOWED_TABLES)
+    sql = validate_select_sql(
+        "SELECT task_id FROM work_orders", allowed_tables=ALLOWED_TABLES
+    )
 
     assert "FROM work_orders" in sql
     assert sql.endswith("LIMIT 50")
@@ -39,7 +41,9 @@ def test_validate_select_sql_allows_string_literal_with_blocked_keyword():
 
 
 def test_validate_select_sql_preserves_existing_limit():
-    sql = validate_select_sql("SELECT task_id FROM work_orders LIMIT 10", allowed_tables=ALLOWED_TABLES)
+    sql = validate_select_sql(
+        "SELECT task_id FROM work_orders LIMIT 10", allowed_tables=ALLOWED_TABLES
+    )
 
     assert sql.lower().count("limit") == 1
     assert "10" in sql
@@ -63,7 +67,9 @@ def test_validate_select_sql_rejects_write_or_admin_statements(sql):
 
 def test_validate_select_sql_rejects_multiple_statements():
     with pytest.raises(ValueError, match="multiple_statements_not_allowed"):
-        validate_select_sql("SELECT 1; DROP TABLE work_orders", allowed_tables=ALLOWED_TABLES)
+        validate_select_sql(
+            "SELECT 1; DROP TABLE work_orders", allowed_tables=ALLOWED_TABLES
+        )
 
 
 def test_validate_select_sql_rejects_unauthorized_table():
@@ -85,9 +91,13 @@ def test_validate_select_sql_rejects_sqlite_admin_constructs(sql):
 
 def test_validate_select_sql_rejects_write_statement_inside_subquery():
     with pytest.raises(ValueError, match="write_or_admin_statement_not_allowed"):
-        validate_select_sql("SELECT * FROM (DELETE FROM work_orders)", allowed_tables=ALLOWED_TABLES)
+        validate_select_sql(
+            "SELECT * FROM (DELETE FROM work_orders)", allowed_tables=ALLOWED_TABLES
+        )
 
 
 def test_validate_select_sql_rejects_sqlite_metadata_table():
     with pytest.raises(ValueError, match="forbidden_construct"):
-        validate_select_sql("SELECT * FROM sqlite_master", allowed_tables=ALLOWED_TABLES)
+        validate_select_sql(
+            "SELECT * FROM sqlite_master", allowed_tables=ALLOWED_TABLES
+        )

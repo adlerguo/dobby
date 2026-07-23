@@ -5,6 +5,12 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.errors import (
+    ConflictError,
+    DependencyError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.maas_auth import maas_service_headers
 from app.models import Model, ModelCatalog, ModelChannel
 from app.schemas.model_center import (
@@ -20,9 +26,12 @@ from app.services.model_catalog_service import get_model_catalog_item
 from app.services.model_service import ensure_model_name_available, load_model_by_name
 
 
-class ConnectionTestFailed(ValueError):
+class ConnectionTestFailed(ValidationError):
     def __init__(self, summary: str | None) -> None:
-        super().__init__("connection_test_failed")
+        super().__init__(
+            code="connection_test_failed",
+            detail={"summary": summary or "connection_test_failed"},
+        )
         self.summary = summary or "connection_test_failed"
 
 
@@ -35,9 +44,12 @@ async def connect_catalog_model(
 ) -> ModelCenterConnectOut:
     catalog = await get_model_catalog_item(db, catalog_id)
     if catalog is None:
-        raise ValueError("model_catalog_not_found")
+        raise NotFoundError(code="model_catalog_not_found")
     validate_connectable_catalog(catalog)
-    await ensure_model_name_available(db, payload.runtime_name)
+    try:
+        await ensure_model_name_available(db, payload.runtime_name)
+    except ValueError as exc:
+        raise ConflictError(code=str(exc)) from exc
 
     base_url = payload.base_url or catalog.default_base_url
     # The test_after_create flag is accepted for API compatibility, but this
@@ -60,14 +72,14 @@ async def connect_catalog_model(
     )
     model = await load_model_by_name(db, payload.runtime_name)
     if model is None:
-        raise ValueError("model_create_failed")
+        raise DependencyError(code="model_create_failed")
     apply_catalog_model_metadata(model, catalog, base_url=base_url)
     await db.commit()
     await db.refresh(model)
     channel = await probe_maas_channel(channel.id)
     stored_channel = await db.get(ModelChannel, channel.id)
     if stored_channel is None:
-        raise ValueError("model_channel_create_failed")
+        raise DependencyError(code="model_channel_create_failed")
     return ModelCenterConnectOut(
         model=ModelHubOut.model_validate(model),
         channel=ModelChannelOut.model_validate(stored_channel),
@@ -83,7 +95,7 @@ async def test_existing_channel(
 ) -> ModelCenterChannelTestOut:
     channel = await db.get(ModelChannel, channel_id)
     if channel is None or channel.tenant_id != tenant_id:
-        raise ValueError("channel_not_found")
+        raise NotFoundError(code="channel_not_found")
     maas_channel = await probe_maas_channel(channel_id)
     await db.refresh(channel)
     test_result = ConnectionTestOut(
@@ -99,10 +111,12 @@ async def test_existing_channel(
 
 
 def validate_connectable_catalog(catalog: ModelCatalog) -> None:
-    if catalog.model_type == "rerank":
-        raise ValueError("model_type_not_supported")
+    if catalog.model_type not in {"llm", "embedding"}:
+        raise ValidationError(code="model_type_not_supported")
+    if (catalog.recommended_parameters or {}).get("availability") == "catalog_only":
+        raise ValidationError(code="model_type_not_supported")
     if catalog.protocol not in {"mock", "openai_compatible"}:
-        raise ValueError("protocol_not_supported")
+        raise ValidationError(code="protocol_not_supported")
 
 
 async def probe_transient_catalog_channel(
@@ -130,8 +144,13 @@ async def probe_transient_catalog_channel(
             response.raise_for_status()
             result = MaasProbeOut.model_validate(response.json())
     except httpx.HTTPError as exc:
-        raise ValueError("maas_probe_failed") from exc
-    return ConnectionTestOut(ok=result.ok, health=result.health, error=result.error, embedding_dim=result.embedding_dim)
+        raise DependencyError(code="maas_probe_failed") from exc
+    return ConnectionTestOut(
+        ok=result.ok,
+        health=result.health,
+        error=result.error,
+        embedding_dim=result.embedding_dim,
+    )
 
 
 async def create_maas_catalog_channel(
@@ -163,7 +182,7 @@ async def create_maas_catalog_channel(
             response.raise_for_status()
             return MaasChannelOut.model_validate(response.json())
     except httpx.HTTPError as exc:
-        raise ValueError("model_channel_create_failed") from exc
+        raise DependencyError(code="model_channel_create_failed") from exc
 
 
 async def probe_maas_channel(channel_id: UUID) -> MaasChannelOut:
@@ -177,13 +196,15 @@ async def probe_maas_channel(channel_id: UUID) -> MaasChannelOut:
             return MaasChannelOut.model_validate(response.json())
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
-            raise ValueError("channel_not_found") from exc
-        raise ValueError("maas_probe_failed") from exc
+            raise NotFoundError(code="channel_not_found") from exc
+        raise DependencyError(code="maas_probe_failed") from exc
     except httpx.HTTPError as exc:
-        raise ValueError("maas_probe_failed") from exc
+        raise DependencyError(code="maas_probe_failed") from exc
 
 
-def apply_catalog_model_metadata(model: Model, catalog: ModelCatalog, *, base_url: str) -> None:
+def apply_catalog_model_metadata(
+    model: Model, catalog: ModelCatalog, *, base_url: str
+) -> None:
     availability = catalog.recommended_parameters.get("availability")
     model.provider = catalog.provider
     model.type = catalog.model_type
@@ -210,4 +231,8 @@ def apply_catalog_model_metadata(model: Model, catalog: ModelCatalog, *, base_ur
 
 def catalog_request_defaults(catalog: ModelCatalog) -> dict:
     excluded = {"availability"}
-    return {key: value for key, value in (catalog.recommended_parameters or {}).items() if key not in excluded}
+    return {
+        key: value
+        for key, value in (catalog.recommended_parameters or {}).items()
+        if key not in excluded
+    }

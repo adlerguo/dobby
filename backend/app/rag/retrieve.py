@@ -12,6 +12,8 @@ from app.rag.embeddings import embed_texts
 from app.rag.text_segmenter import segment_for_search
 from app.schemas import CitationOut, RetrieveOut, RetrievedChunkOut
 
+RERANK_POOL_MULTIPLIER = 4
+
 
 @dataclass
 class Candidate:
@@ -46,19 +48,36 @@ async def retrieve_chunks(
     text_candidates: list[Candidate] = []
 
     if match_type in {"hybrid", "vector"}:
-        query_embedding = (await embed_texts(model=kb.embedding_model or "mock-embedding", texts=[query]))[0]
+        query_embedding = (
+            await embed_texts(
+                model=kb.embedding_model or "mock-embedding", texts=[query]
+            )
+        )[0]
         embedding_dim = normalize_embedding_dim(kb.embedding_dim)
         if len(query_embedding) != embedding_dim:
             raise ValueError("dimension_mismatch")
-        vector_candidates = await vector_search(db, tenant_id, kb_id, query_embedding, recall_k, embedding_dim)
+        vector_candidates = await vector_search(
+            db, tenant_id, kb_id, query_embedding, recall_k, embedding_dim
+        )
         if score_threshold and score_threshold > 0:
             vector_candidates = [
-                candidate for candidate in vector_candidates if (candidate.vector_score or 0) >= score_threshold
+                candidate
+                for candidate in vector_candidates
+                if (candidate.vector_score or 0) >= score_threshold
             ]
     if match_type in {"hybrid", "keyword"}:
-        text_candidates = await text_search(db, tenant_id, kb_id, query, recall_k, normalize_embedding_dim(kb.embedding_dim))
+        text_candidates = await text_search(
+            db,
+            tenant_id,
+            kb_id,
+            query,
+            recall_k,
+            normalize_embedding_dim(kb.embedding_dim),
+        )
 
-    merged = merge_candidates(vector_candidates, text_candidates, top_k)
+    pool_k = max(top_k * RERANK_POOL_MULTIPLIER, top_k)
+    pool = merge_candidates(vector_candidates, text_candidates, pool_k)
+    merged = await rerank_candidates(query=query, candidates=pool, top_k=top_k)
 
     chunks = [
         RetrievedChunkOut(
@@ -94,9 +113,13 @@ async def retrieve_chunks(
     return RetrieveOut(chunks=chunks, citations=citations)
 
 
-async def get_kb(db: AsyncSession, *, tenant_id: UUID, kb_id: UUID) -> KnowledgeBase | None:
+async def get_kb(
+    db: AsyncSession, *, tenant_id: UUID, kb_id: UUID
+) -> KnowledgeBase | None:
     result = await db.execute(
-        select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
+        select(KnowledgeBase).where(
+            KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id
+        )
     )
     return result.scalar_one_or_none()
 
@@ -110,7 +133,9 @@ async def vector_search(
     embedding_dim: int,
 ) -> list[Candidate]:
     chunk_model = chunk_model_for_dim(embedding_dim)
-    distance = chunk_model.embedding.cosine_distance(bindparam("query_embedding", type_=Vector(embedding_dim)))
+    distance = chunk_model.embedding.cosine_distance(
+        bindparam("query_embedding", type_=Vector(embedding_dim))
+    )
     stmt = (
         select(
             chunk_model.id,
@@ -122,7 +147,11 @@ async def vector_search(
             (1 - distance).label("score"),
         )
         .join(Document, Document.id == chunk_model.doc_id)
-        .where(chunk_model.tenant_id == tenant_id, chunk_model.kb_id == kb_id, chunk_model.embedding.is_not(None))
+        .where(
+            chunk_model.tenant_id == tenant_id,
+            chunk_model.kb_id == kb_id,
+            chunk_model.embedding.is_not(None),
+        )
         .order_by(distance)
         .limit(limit)
     )
@@ -157,19 +186,11 @@ async def text_search(
     if not query_tokens:
         return []
 
-    rows = await load_text_search_rows(db, tenant_id, kb_id, embedding_dim)
-    segmented_rows = [(row["id"], segment_for_search(row["content"] or "")) for row in rows]
-    segmented_rows = [(chunk_id, content) for chunk_id, content in segmented_rows if content]
-    if not segmented_rows:
-        return []
-
-    chunk_ids = [chunk_id for chunk_id, _ in segmented_rows]
-    segmented_contents = [content for _, content in segmented_rows]
     table_name = chunk_model.__tablename__
     stmt = text(
         f"""
-        WITH segmented(id, content) AS (
-            SELECT * FROM unnest(CAST(:chunk_ids AS uuid[]), CAST(:segmented_contents AS text[]))
+        WITH query AS (
+            SELECT plainto_tsquery('simple', :query) AS tsq
         )
         SELECT
             c.id,
@@ -178,14 +199,14 @@ async def text_search(
             c.seq,
             c.content,
             c.meta,
-            ts_rank_cd(to_tsvector('simple', segmented.content), plainto_tsquery('simple', :query))::float AS score
+            ts_rank_cd(to_tsvector('simple', c.content), query.tsq)::float AS score
         FROM {table_name} c
-        JOIN segmented ON segmented.id = c.id
         JOIN documents d ON d.id = c.doc_id
+        CROSS JOIN query
         WHERE
             c.tenant_id = :tenant_id
             AND c.kb_id = :kb_id
-            AND to_tsvector('simple', segmented.content) @@ plainto_tsquery('simple', :query)
+            AND to_tsvector('simple', c.content) @@ query.tsq
         ORDER BY score DESC
         LIMIT :limit
         """
@@ -197,8 +218,6 @@ async def text_search(
             "kb_id": kb_id,
             "query": query_tokens,
             "limit": limit,
-            "chunk_ids": chunk_ids,
-            "segmented_contents": segmented_contents,
         },
     )
     candidates: list[Candidate] = []
@@ -218,18 +237,9 @@ async def text_search(
     return candidates
 
 
-async def load_text_search_rows(db: AsyncSession, tenant_id: UUID, kb_id: UUID, embedding_dim: int) -> list[dict]:
-    chunk_model = chunk_model_for_dim(embedding_dim)
-    stmt = (
-        select(chunk_model.id, chunk_model.content)
-        .where(chunk_model.tenant_id == tenant_id, chunk_model.kb_id == kb_id)
-        .order_by(chunk_model.seq.asc())
-    )
-    result = await db.execute(stmt)
-    return list(result.mappings().all())
-
-
-def merge_candidates(vector_candidates: list[Candidate], text_candidates: list[Candidate], top_k: int) -> list[Candidate]:
+def merge_candidates(
+    vector_candidates: list[Candidate], text_candidates: list[Candidate], top_k: int
+) -> list[Candidate]:
     by_id: dict[UUID, Candidate] = {}
     for candidate in vector_candidates:
         by_id[candidate.id] = candidate
@@ -242,6 +252,13 @@ def merge_candidates(vector_candidates: list[Candidate], text_candidates: list[C
         existing.text_score = candidate.text_score
 
     return sorted(by_id.values(), key=hybrid_score, reverse=True)[:top_k]
+
+
+async def rerank_candidates(
+    *, query: str, candidates: list[Candidate], top_k: int
+) -> list[Candidate]:
+    # Reserved rerank hook. Current pass-through preserves existing hybrid-score order exactly.
+    return candidates[:top_k]
 
 
 def hybrid_score(candidate: Candidate) -> float:

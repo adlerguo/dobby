@@ -8,12 +8,16 @@ class TextChunk:
     meta: dict[str, int | str]
 
 
-def chunk_text(text: str, *, chunk_size: int = 800, overlap: int = 80) -> list[TextChunk]:
+def chunk_text(
+    text: str, *, chunk_size: int = 800, overlap: int = 80
+) -> list[TextChunk]:
     normalized = "\n".join(line.rstrip() for line in text.splitlines()).strip()
     if not normalized:
         return []
 
-    paragraphs = [paragraph.strip() for paragraph in normalized.split("\n\n") if paragraph.strip()]
+    paragraphs = [
+        paragraph.strip() for paragraph in normalized.split("\n\n") if paragraph.strip()
+    ]
     chunks: list[TextChunk] = []
     current = ""
 
@@ -22,7 +26,14 @@ def chunk_text(text: str, *, chunk_size: int = 800, overlap: int = 80) -> list[T
             if current:
                 chunks.append(build_chunk(len(chunks), current))
                 current = ""
-            chunks.extend(split_long_paragraph(paragraph, start_seq=len(chunks), chunk_size=chunk_size, overlap=overlap))
+            chunks.extend(
+                split_long_paragraph(
+                    paragraph,
+                    start_seq=len(chunks),
+                    chunk_size=chunk_size,
+                    overlap=overlap,
+                )
+            )
             continue
 
         candidate = paragraph if not current else f"{current}\n\n{paragraph}"
@@ -39,7 +50,9 @@ def chunk_text(text: str, *, chunk_size: int = 800, overlap: int = 80) -> list[T
     return chunks
 
 
-def split_long_paragraph(paragraph: str, *, start_seq: int, chunk_size: int, overlap: int) -> list[TextChunk]:
+def split_long_paragraph(
+    paragraph: str, *, start_seq: int, chunk_size: int, overlap: int
+) -> list[TextChunk]:
     chunks: list[TextChunk] = []
     start = 0
     while start < len(paragraph):
@@ -54,4 +67,6 @@ def split_long_paragraph(paragraph: str, *, start_seq: int, chunk_size: int, ove
 
 
 def build_chunk(seq: int, content: str) -> TextChunk:
-    return TextChunk(seq=seq, content=content, meta={"chunk_method": "paragraph_window"})
+    return TextChunk(
+        seq=seq, content=content, meta={"chunk_method": "paragraph_window"}
+    )

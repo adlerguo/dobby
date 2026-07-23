@@ -4,7 +4,19 @@
 @import "./element-plus.css";
 @import "./markdown.css";
 
+body {
+  zoom: var(--app-zoom);
+}
+
+body .el-popper {
+  position: fixed !important;
+  zoom: calc(1 / var(--app-zoom));
+  transform: scale(var(--app-zoom)) !important;
+  transform-origin: top left;
+}
+
 .app-shell {
+  min-height: calc(100vh / var(--app-zoom));
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   background: var(--color-bg-page);
 }
@@ -13,7 +25,7 @@
   position: sticky;
   top: 0;
   display: flex;
-  height: 100vh;
+  height: calc(100vh / var(--app-zoom));
   flex-direction: column;
   border-right: 0;
   background: var(--color-bg-sidebar);
@@ -46,6 +58,8 @@
 }
 
 .nav-list {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   gap: var(--space-4);
   padding-right: 2px;
@@ -95,7 +109,8 @@
   grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  margin-top: auto;
+  flex: 0 0 auto;
+  margin-top: var(--space-4);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, 0.04);
@@ -139,6 +154,12 @@
 
 .account-chevron {
   color: #9ca3af;
+}
+
+.admin-dropdown-menu .el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .main {

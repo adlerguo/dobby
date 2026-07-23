@@ -9,7 +9,12 @@ from app.core.auth import AuthContext, require_perm
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.models import Tenant, User
-from app.schemas import InitialTenantAdminOut, TenantCreate, TenantOut, TenantProvisionOut
+from app.schemas import (
+    InitialTenantAdminOut,
+    TenantCreate,
+    TenantOut,
+    TenantProvisionOut,
+)
 from app.services import assign_role_codes, ensure_roles_for_tenant
 from app.services.audit_service import write_audit
 
@@ -25,7 +30,12 @@ async def list_tenants(
     return list(result.scalars().all())
 
 
-@router.post("", response_model=TenantProvisionOut, status_code=status.HTTP_201_CREATED, summary="Create tenant")
+@router.post(
+    "",
+    response_model=TenantProvisionOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create tenant",
+)
 async def create_tenant(
     payload: TenantCreate,
     request: Request,
@@ -33,11 +43,15 @@ async def create_tenant(
     db: AsyncSession = Depends(get_db),
 ) -> TenantProvisionOut:
     if "super_admin" not in auth.roles:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_required"
+        )
 
     result = await db.execute(select(Tenant).where(Tenant.code == payload.code))
     if result.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tenant_code_exists")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="tenant_code_exists"
+        )
 
     temporary_password = generate_temporary_password()
     tenant = Tenant(name=payload.name, code=payload.code, status="active")
@@ -60,7 +74,9 @@ async def create_tenant(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tenant_admin_conflict") from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="tenant_admin_conflict"
+        ) from exc
     except Exception:
         await db.rollback()
         raise
@@ -74,7 +90,11 @@ async def create_tenant(
         action="tenant.create",
         resource_type="tenant",
         resource_id=tenant.id,
-        detail={"name": tenant.name, "code": tenant.code, "initial_admin": admin.username},
+        detail={
+            "name": tenant.name,
+            "code": tenant.code,
+            "initial_admin": admin.username,
+        },
         request=request,
     )
     return TenantProvisionOut(

@@ -1,4 +1,7 @@
 :root {
+  /* Single switch for whole-app scale, including Element Plus teleported popovers. */
+  --app-zoom: 0.85;
+
   --color-bg-page: #f5f7fa;
   --color-bg-card: #ffffff;
   --color-bg-sidebar: #111827;

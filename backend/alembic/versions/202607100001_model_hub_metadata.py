@@ -20,17 +20,56 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column("models", sa.Column("display_name", sa.Text(), nullable=True))
     op.add_column("models", sa.Column("description", sa.Text(), nullable=True))
-    op.add_column("models", sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=True))
     op.add_column(
         "models",
-        sa.Column("provider_config", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=True),
+        sa.Column(
+            "is_active", sa.Boolean(), server_default=sa.text("true"), nullable=True
+        ),
     )
-    op.add_column("models", sa.Column("import_source", sa.Text(), server_default=sa.text("'external'"), nullable=True))
+    op.add_column(
+        "models",
+        sa.Column(
+            "provider_config",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "models",
+        sa.Column(
+            "import_source",
+            sa.Text(),
+            server_default=sa.text("'external'"),
+            nullable=True,
+        ),
+    )
     op.add_column("models", sa.Column("model_icon_path", sa.Text(), nullable=True))
     op.add_column("models", sa.Column("publish_date", sa.Text(), nullable=True))
-    op.add_column("models", sa.Column("scope_type", sa.Text(), server_default=sa.text("'tenant'"), nullable=True))
-    op.add_column("models", sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True))
-    op.add_column("models", sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True))
+    op.add_column(
+        "models",
+        sa.Column(
+            "scope_type", sa.Text(), server_default=sa.text("'tenant'"), nullable=True
+        ),
+    )
+    op.add_column(
+        "models",
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "models",
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=True,
+        ),
+    )
 
 
 def downgrade() -> None:

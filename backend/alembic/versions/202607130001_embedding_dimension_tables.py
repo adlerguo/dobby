@@ -10,7 +10,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("alter table knowledge_bases add column if not exists embedding_dim int not null default 1536")
+    op.execute(
+        "alter table knowledge_bases add column if not exists embedding_dim int not null default 1536"
+    )
     for dim in (1024, 3072):
         table = f"chunks_{dim}"
         op.execute(
@@ -30,9 +32,13 @@ def upgrade() -> None:
             """
         )
         if dim <= 2000:
-            op.execute(f"create index if not exists ix_{table}_embedding on {table} using hnsw (embedding vector_cosine_ops)")
+            op.execute(
+                f"create index if not exists ix_{table}_embedding on {table} using hnsw (embedding vector_cosine_ops)"
+            )
         op.execute(f"create index if not exists ix_{table}_kb_id on {table} (kb_id)")
-        op.execute(f"create index if not exists {table}_content_fts on {table} using gin (to_tsvector('simple', content))")
+        op.execute(
+            f"create index if not exists {table}_content_fts on {table} using gin (to_tsvector('simple', content))"
+        )
 
 
 def downgrade() -> None:

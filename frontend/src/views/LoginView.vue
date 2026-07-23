@@ -45,14 +45,14 @@ async function submit() {
         <div class="brand-mark">AI</div>
         <div>
           <h1>登录企业智能体中台</h1>
-          <p>使用租户账号进入工作台。</p>
+          <p>使用企业账号进入工作台。</p>
         </div>
       </div>
 
       <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
 
       <el-form class="login-form" label-position="top" @keyup.enter="submit">
-        <el-form-item label="租户编码">
+        <el-form-item label="企业编码">
           <el-input v-model="form.tenant_code" autocomplete="organization" />
         </el-form-item>
         <el-form-item label="用户名">
@@ -62,7 +62,7 @@ async function submit() {
           <el-input v-model="form.password" type="password" autocomplete="current-password" show-password />
         </el-form-item>
         <el-button class="login-submit" type="primary" :loading="loading" @click="submit">继续</el-button>
-        <el-button text class="demo-button" @click="fillDemoAccount">填入演示账号</el-button>
+        <el-button text class="demo-button" @click="fillDemoAccount">填入示例账号</el-button>
       </el-form>
     </section>
   </main>

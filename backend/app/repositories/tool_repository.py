@@ -8,5 +8,7 @@ class ToolRepository(TenantRepository[Tool]):
     model = Tool
 
     async def list_active(self) -> Sequence[Tool]:
-        result = await self.db.execute(self.query().where(Tool.status == "active").order_by(Tool.name))
+        result = await self.db.execute(
+            self.query().where(Tool.status == "active").order_by(Tool.name)
+        )
         return result.scalars().all()

@@ -50,7 +50,9 @@ class CreatedAtMixin:
 
 
 class TenantMixin:
-    tenant_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), nullable=False, index=True
+    )
 
 
 JsonDict = dict[str, Any]

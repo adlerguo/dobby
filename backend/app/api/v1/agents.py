@@ -1,11 +1,18 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_current_auth, require_perm
 from app.core.database import get_db
+from app.core.errors import (
+    AppError,
+    ConflictError,
+    DependencyError,
+    NotFoundError,
+    ValidationError,
+)
 from app.models import AgentTemplate, Model
 from app.orchestrator import build_agent_context, dispatch_single_agent
 from app.schemas import (
@@ -19,51 +26,70 @@ from app.schemas import (
     ContextBuildOut,
     ModelOut,
 )
-from app.services import archive_agent, create_agent, ensure_agent_templates, get_agent, list_agents, publish_agent, update_agent
+from app.services import (
+    archive_agent,
+    create_agent,
+    ensure_agent_templates,
+    get_agent,
+    list_agents,
+    publish_agent,
+    update_agent,
+)
 from app.services.audit_service import write_audit
 
 router = APIRouter(tags=["agents"])
 
 
-def agent_error(exc: ValueError) -> HTTPException:
+def agent_error(exc: ValueError) -> AppError:
     detail = str(exc)
     code = getattr(exc, "code", None)
     if isinstance(code, str) and code:
-        body = {"error": {"code": code, "message": getattr(exc, "detail", code)}}
         if code in {"maas_timeout"}:
-            return HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=body)
+            return AppError(
+                code=code, message=getattr(exc, "detail", code), status_code=504
+            )
         if code in {"dependency_unavailable"}:
-            return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=body)
+            return AppError(
+                code=code, message=getattr(exc, "detail", code), status_code=503
+            )
         if code in {"maas_call_failed", "maas_stream_failed"}:
-            return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=body)
+            return DependencyError(code=code, message=getattr(exc, "detail", code))
         if code == "no_active_model_channel":
-            return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=body)
+            return ConflictError(code=code, message=getattr(exc, "detail", code))
         if code.endswith("_not_found"):
-            return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=body)
-        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=body)
+            return NotFoundError(code=code, message=getattr(exc, "detail", code))
+        return ValidationError(code=code, message=getattr(exc, "detail", code))
     if detail.endswith("_exists"):
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+        return ConflictError(code=detail)
     if detail in {"agent_template_type_mismatch"}:
-        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        return ValidationError(code=detail)
     if detail in {"tool_not_bound"}:
-        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        return ValidationError(code=detail)
     if detail in {"maas_call_failed"}:
-        return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+        return DependencyError(code=detail)
     if detail == "no_active_model_channel":
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
-    if detail.endswith("_not_found") or detail.startswith(("kb_not_found:", "tool_not_found:")):
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        return ConflictError(code=detail)
+    if detail.endswith("_not_found") or detail.startswith(
+        ("kb_not_found:", "tool_not_found:")
+    ):
+        return NotFoundError(code=detail.split(":", 1)[0], detail={"raw": detail})
+    return ValidationError(code=detail)
 
 
-@router.get("/agent-templates", response_model=list[AgentTemplateOut], summary="List agent templates")
+@router.get(
+    "/agent-templates",
+    response_model=list[AgentTemplateOut],
+    summary="List agent templates",
+)
 async def list_agent_templates(
     auth: AuthContext = Depends(get_current_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list:
     await ensure_agent_templates(db)
     await db.commit()
-    result = await db.execute(select(AgentTemplate).order_by(AgentTemplate.type, AgentTemplate.name))
+    result = await db.execute(
+        select(AgentTemplate).order_by(AgentTemplate.type, AgentTemplate.name)
+    )
     return list(result.scalars().all())
 
 
@@ -85,7 +111,12 @@ async def list_agent_api(
     return await list_agents(db, tenant_id=auth.tenant_id, status=status_filter)
 
 
-@router.post("/agents", response_model=AgentOut, status_code=status.HTTP_201_CREATED, summary="Create agent")
+@router.post(
+    "/agents",
+    response_model=AgentOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create agent",
+)
 async def create_agent_api(
     payload: AgentCreate,
     request: Request,
@@ -93,7 +124,9 @@ async def create_agent_api(
     db: AsyncSession = Depends(get_db),
 ) -> AgentOut:
     try:
-        agent = await create_agent(db, tenant_id=auth.tenant_id, user_id=auth.user_id, payload=payload)
+        agent = await create_agent(
+            db, tenant_id=auth.tenant_id, user_id=auth.user_id, payload=payload
+        )
     except ValueError as exc:
         raise agent_error(exc) from exc
     await write_audit(
@@ -117,7 +150,7 @@ async def get_agent_api(
 ) -> AgentOut:
     agent = await get_agent(db, tenant_id=auth.tenant_id, agent_id=agent_id)
     if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise NotFoundError(code="not_found", message="agent_not_found")
     return agent
 
 
@@ -130,11 +163,13 @@ async def update_agent_api(
     db: AsyncSession = Depends(get_db),
 ) -> AgentOut:
     try:
-        agent = await update_agent(db, tenant_id=auth.tenant_id, agent_id=agent_id, payload=payload)
+        agent = await update_agent(
+            db, tenant_id=auth.tenant_id, agent_id=agent_id, payload=payload
+        )
     except ValueError as exc:
         raise agent_error(exc) from exc
     if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise NotFoundError(code="not_found", message="agent_not_found")
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -148,7 +183,9 @@ async def update_agent_api(
     return agent
 
 
-@router.post("/agents/{agent_id}/publish", response_model=AgentOut, summary="Publish agent")
+@router.post(
+    "/agents/{agent_id}/publish", response_model=AgentOut, summary="Publish agent"
+)
 async def publish_agent_api(
     agent_id: UUID,
     request: Request,
@@ -157,7 +194,7 @@ async def publish_agent_api(
 ) -> AgentOut:
     agent = await publish_agent(db, tenant_id=auth.tenant_id, agent_id=agent_id)
     if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise NotFoundError(code="not_found", message="agent_not_found")
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -171,7 +208,11 @@ async def publish_agent_api(
     return agent
 
 
-@router.post("/agents/{agent_id}/context", response_model=ContextBuildOut, summary="Build agent context")
+@router.post(
+    "/agents/{agent_id}/context",
+    response_model=ContextBuildOut,
+    summary="Build agent context",
+)
 async def build_agent_context_api(
     agent_id: UUID,
     payload: ContextBuildIn,
@@ -195,7 +236,7 @@ async def build_agent_context_api(
     except ValueError as exc:
         raise agent_error(exc) from exc
     if context is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise NotFoundError(code="not_found", message="agent_not_found")
     return context
 
 
@@ -212,16 +253,20 @@ async def run_agent_api(
             tenant_id=auth.tenant_id,
             user_id=auth.user_id,
             agent_id=agent_id,
-                payload=payload,
-            )
+            payload=payload,
+        )
     except ValueError as exc:
         raise agent_error(exc) from exc
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise NotFoundError(code="not_found", message="agent_not_found")
     return result
 
 
-@router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Archive agent")
+@router.delete(
+    "/agents/{agent_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Archive agent",
+)
 async def delete_agent_api(
     agent_id: UUID,
     request: Request,
@@ -230,7 +275,7 @@ async def delete_agent_api(
 ) -> None:
     archived = await archive_agent(db, tenant_id=auth.tenant_id, agent_id=agent_id)
     if not archived:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent_not_found")
+        raise NotFoundError(code="not_found", message="agent_not_found")
     await write_audit(
         db,
         tenant_id=auth.tenant_id,

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     upstream_pool_timeout: float = Field(default=5.0)
     channel_health_probe_interval: int = Field(default=30)
     channel_failed_ttl: int = Field(default=60)
+    channel_failure_threshold: int = Field(default=3)
     production_mode: bool = Field(default=True)
 
 

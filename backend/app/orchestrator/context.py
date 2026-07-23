@@ -9,7 +9,13 @@ from app.models import Agent, Conversation, Message, Tool
 from app.orchestrator.answer_style import ANSWER_STYLE_PROMPT
 from app.rag.retrieve import retrieve_chunks
 from app.repositories import AgentRepository
-from app.schemas import CitationOut, ContextBuildOut, ContextMessageOut, ContextToolOut, RetrievedChunkOut
+from app.schemas import (
+    CitationOut,
+    ContextBuildOut,
+    ContextMessageOut,
+    ContextToolOut,
+    RetrievedChunkOut,
+)
 from app.services.workspace_service import get_workspace_resource_ids
 
 
@@ -41,9 +47,15 @@ async def build_agent_context(
     if agent is None or agent.status == "archived":
         return None
 
-    workspace_resources = await get_workspace_resource_ids(db, tenant_id=tenant_id, workspace_id=workspace_id)
-    kb_ids = unique_ids([*(await repo.get_kb_ids(agent.id)), *workspace_resources["kb"]])
-    tool_ids = unique_ids([*(await repo.get_tool_ids(agent.id)), *workspace_resources["tool"]])
+    workspace_resources = await get_workspace_resource_ids(
+        db, tenant_id=tenant_id, workspace_id=workspace_id
+    )
+    kb_ids = unique_ids(
+        [*(await repo.get_kb_ids(agent.id)), *workspace_resources["kb"]]
+    )
+    tool_ids = unique_ids(
+        [*(await repo.get_tool_ids(agent.id)), *workspace_resources["tool"]]
+    )
     rag_config = resolve_rag_config(
         agent,
         request_top_k=top_k,
@@ -92,11 +104,15 @@ async def build_agent_context(
     )
 
 
-async def load_tools(db: AsyncSession, *, tenant_id: UUID, tool_ids: list[UUID]) -> list[Tool]:
+async def load_tools(
+    db: AsyncSession, *, tenant_id: UUID, tool_ids: list[UUID]
+) -> list[Tool]:
     if not tool_ids:
         return []
     result = await db.execute(
-        select(Tool).where(Tool.tenant_id == tenant_id, Tool.id.in_(tool_ids), Tool.status == "active")
+        select(Tool).where(
+            Tool.tenant_id == tenant_id, Tool.id.in_(tool_ids), Tool.status == "active"
+        )
     )
     tools_by_id = {tool.id: tool for tool in result.scalars().all()}
     return [tools_by_id[tool_id] for tool_id in tool_ids if tool_id in tools_by_id]
@@ -125,7 +141,9 @@ async def load_history(
 
     result = await db.execute(
         select(Message)
-        .where(Message.tenant_id == tenant_id, Message.conversation_id == conversation_id)
+        .where(
+            Message.tenant_id == tenant_id, Message.conversation_id == conversation_id
+        )
         .order_by(Message.created_at.desc())
         .limit(limit)
     )
@@ -151,7 +169,9 @@ async def retrieve_agent_knowledge(
             kb_id=kb_id,
             query=query,
             top_k=top_k,
-            match_type=match_type if match_type in {"hybrid", "vector", "keyword"} else "hybrid",
+            match_type=match_type
+            if match_type in {"hybrid", "vector", "keyword"}
+            else "hybrid",
             score_threshold=score_threshold,
         )
         if result is None:
@@ -159,7 +179,11 @@ async def retrieve_agent_knowledge(
         chunks.extend(result.chunks)
         citations.extend(result.citations)
 
-    ranked = sorted(zip(chunks, citations, strict=False), key=lambda pair: pair[0].score, reverse=True)
+    ranked = sorted(
+        zip(chunks, citations, strict=False),
+        key=lambda pair: pair[0].score,
+        reverse=True,
+    )
     deduped: list[tuple[RetrievedChunkOut, CitationOut]] = []
     seen_chunk_ids: set[UUID] = set()
     for chunk, citation in ranked:
@@ -189,15 +213,23 @@ def resolve_rag_config(
         maximum=20,
     )
     score_threshold = coerce_float(
-        request_score_threshold if request_score_threshold is not None else rag.get("score_threshold"),
+        request_score_threshold
+        if request_score_threshold is not None
+        else rag.get("score_threshold"),
         default=0.0,
         minimum=0.0,
         maximum=1.0,
     )
-    match_type = request_match_type if request_match_type is not None else rag.get("match_type")
+    match_type = (
+        request_match_type if request_match_type is not None else rag.get("match_type")
+    )
     if match_type not in {"hybrid", "vector", "keyword"}:
         match_type = "hybrid"
-    return {"top_k": top_k, "score_threshold": score_threshold, "match_type": match_type}
+    return {
+        "top_k": top_k,
+        "score_threshold": score_threshold,
+        "match_type": match_type,
+    }
 
 
 def coerce_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
@@ -208,7 +240,9 @@ def coerce_int(value: object, *, default: int, minimum: int, maximum: int) -> in
     return min(max(number, minimum), maximum)
 
 
-def coerce_float(value: object, *, default: float, minimum: float, maximum: float) -> float:
+def coerce_float(
+    value: object, *, default: float, minimum: float, maximum: float
+) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -228,7 +262,9 @@ def assemble_context_parts(
     max_tokens: int,
     rag_config: dict[str, int | float | str],
 ) -> ContextParts:
-    user_message = ContextMessageOut(role="user", content=query, tokens=estimate_tokens(query))
+    user_message = ContextMessageOut(
+        role="user", content=query, tokens=estimate_tokens(query)
+    )
     system_message = make_system_message(agent, tools)
     fixed_tokens = system_message.tokens + user_message.tokens
     remaining = max(max_tokens - fixed_tokens, 0)
@@ -236,10 +272,12 @@ def assemble_context_parts(
     knowledge_budget = remaining - history_budget
 
     history_messages, history_dropped = fit_history(history, history_budget)
-    knowledge_message, included_chunks, included_citations, knowledge_truncation = fit_knowledge(
-        chunks,
-        citations,
-        knowledge_budget,
+    knowledge_message, included_chunks, included_citations, knowledge_truncation = (
+        fit_knowledge(
+            chunks,
+            citations,
+            knowledge_budget,
+        )
     )
 
     messages = [system_message]
@@ -256,13 +294,17 @@ def assemble_context_parts(
         token_budget={
             "max": max_tokens,
             "system": system_message.tokens,
-            "knowledge": knowledge_message.tokens if knowledge_message is not None else 0,
+            "knowledge": knowledge_message.tokens
+            if knowledge_message is not None
+            else 0,
             "history": sum(message.tokens for message in history_messages),
             "user": user_message.tokens,
             "total": total_tokens,
         },
         truncation={
-            "conversation_id": str(conversation_id) if conversation_id is not None else None,
+            "conversation_id": str(conversation_id)
+            if conversation_id is not None
+            else None,
             "history_requested": len(history),
             "history_dropped": history_dropped,
             "retrieved_chunks": len(chunks),
@@ -277,7 +319,9 @@ def assemble_context_parts(
 
 def make_system_message(agent: Agent, tools: list[Tool]) -> ContextMessageOut:
     config = agent.config or {}
-    persona = agent.persona or config.get("persona") or "你是企业智能体中台中的业务助手。"
+    persona = (
+        agent.persona or config.get("persona") or "你是企业智能体中台中的业务助手。"
+    )
     answer_style_enabled = config.get("answer_style_enabled", True) is not False
     lines = [
         persona,
@@ -292,14 +336,22 @@ def make_system_message(agent: Agent, tools: list[Tool]) -> ContextMessageOut:
     if tools:
         lines.extend(["", "可用工具清单："])
         for tool in tools:
-            schema_text = json.dumps(tool.schema or {}, ensure_ascii=False, separators=(",", ":"))
-            lines.append(f"- id={tool.id} name={tool.name} type={tool.type} schema={schema_text}")
+            schema_text = json.dumps(
+                tool.schema or {}, ensure_ascii=False, separators=(",", ":")
+            )
+            lines.append(
+                f"- id={tool.id} name={tool.name} type={tool.type} schema={schema_text}"
+            )
 
     content = "\n".join(lines)
-    return ContextMessageOut(role="system", content=content, tokens=estimate_tokens(content))
+    return ContextMessageOut(
+        role="system", content=content, tokens=estimate_tokens(content)
+    )
 
 
-def fit_history(history: list[Message], budget: int) -> tuple[list[ContextMessageOut], int]:
+def fit_history(
+    history: list[Message], budget: int
+) -> tuple[list[ContextMessageOut], int]:
     selected: list[ContextMessageOut] = []
     used = 0
     dropped = 0
@@ -307,7 +359,9 @@ def fit_history(history: list[Message], budget: int) -> tuple[list[ContextMessag
         content = message.content or ""
         tokens = estimate_tokens(content)
         if tokens + used <= budget:
-            selected.append(ContextMessageOut(role=message.role, content=content, tokens=tokens))
+            selected.append(
+                ContextMessageOut(role=message.role, content=content, tokens=tokens)
+            )
             used += tokens
         else:
             dropped += 1
@@ -329,7 +383,9 @@ def fit_knowledge(
     used = estimate_tokens("\n".join(lines))
     truncated = False
 
-    for index, (chunk, citation) in enumerate(zip(chunks, citations, strict=False), start=1):
+    for index, (chunk, citation) in enumerate(
+        zip(chunks, citations, strict=False), start=1
+    ):
         seq = f"#{citation.seq}" if citation.seq is not None else "-"
         prefix = f"[{index}] doc={citation.doc_name} chunk={seq} chunk_id={chunk.id} score={chunk.score}\n"
         available = budget - used - estimate_tokens(prefix)
@@ -352,11 +408,20 @@ def fit_knowledge(
     if not selected_chunks:
         return None, [], [], True
     content = "\n\n".join(lines)
-    return ContextMessageOut(role="system", content=content, tokens=estimate_tokens(content)), selected_chunks, selected_citations, truncated
+    return (
+        ContextMessageOut(
+            role="system", content=content, tokens=estimate_tokens(content)
+        ),
+        selected_chunks,
+        selected_citations,
+        truncated,
+    )
 
 
 def tool_out(tool: Tool) -> ContextToolOut:
-    return ContextToolOut(id=tool.id, name=tool.name, type=tool.type, tool_schema=tool.schema or {})
+    return ContextToolOut(
+        id=tool.id, name=tool.name, type=tool.type, tool_schema=tool.schema or {}
+    )
 
 
 def unique_ids(ids: list[UUID]) -> list[UUID]:

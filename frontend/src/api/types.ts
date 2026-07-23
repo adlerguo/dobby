@@ -13,6 +13,54 @@ export interface CurrentUser {
   permissions: string[]
 }
 
+export interface Tenant {
+  id: string
+  name: string
+  code: string
+  status: string
+}
+
+export interface PlatformUser {
+  id: string
+  tenant_id: string
+  username: string
+  display_name?: string | null
+  email?: string | null
+  status?: string | null
+}
+
+export interface PlatformUserCreate {
+  username: string
+  password: string
+  display_name?: string | null
+  email?: string | null
+}
+
+export interface PlatformUserUpdate {
+  display_name?: string | null
+  email?: string | null
+  status?: 'active' | 'disabled'
+}
+
+export interface Role {
+  id: string
+  tenant_id: string
+  name: string
+  code: string
+}
+
+export interface Permission {
+  id: string
+  code: string
+  name?: string | null
+  module?: string | null
+}
+
+export interface AssignRolesOut {
+  user_id: string
+  role_codes: string[]
+}
+
 export interface Agent {
   id: string
   tenant_id?: string
@@ -109,7 +157,7 @@ export interface ModelCatalog {
   provider: string
   model_code: string
   display_name: string
-  model_type: 'llm' | 'embedding' | 'rerank' | string
+  model_type: 'llm' | 'embedding' | 'rerank' | 'vision' | 'asr' | 'tts' | 'image' | string
   description?: string | null
   context_window?: number | null
   supports_streaming: boolean
@@ -232,8 +280,12 @@ export interface RetrieveOut {
 
 export interface Tool {
   id: string
+  tenant_id?: string
   name: string
-  type: string
+  type: 'http' | 'code' | 'builtin' | 'mcp' | string
+  tool_schema?: Record<string, unknown>
+  schema?: Record<string, unknown>
+  config?: Record<string, unknown>
   status?: string
 }
 

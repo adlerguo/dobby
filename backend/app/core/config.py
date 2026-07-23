@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     public_app_daily_request_quota: int = Field(default=1000)
     public_app_daily_token_quota: int = Field(default=100_000)
     public_app_daily_cost_quota: float = Field(default=0.0)
+    login_failure_limit_per_minute: int = Field(default=5)
+    login_rate_limit_fail_open: bool = Field(default=True)
+    upload_max_bytes: int = Field(default=20 * 1024 * 1024)
+    parser_timeout_seconds: float = Field(default=15.0)
+    parser_pdf_max_pages: int = Field(default=200)
+    db_pool_size: int = Field(default=5)
+    db_max_overflow: int = Field(default=10)
+    db_pool_timeout: float = Field(default=30.0)
+    db_pool_recycle: int = Field(default=1800)
 
 
 settings = Settings()

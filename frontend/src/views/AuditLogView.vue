@@ -26,10 +26,10 @@ onMounted(loadAudit)
     <div class="page-header">
       <div>
         <h1>审计</h1>
-        <p>查看租户内关键操作记录。</p>
+        <p>查看企业内关键操作记录，便于追踪配置变更和使用情况。</p>
       </div>
       <div style="display: flex; gap: 8px">
-        <el-input v-model="action" placeholder="按 action 过滤" clearable />
+        <el-input v-model="action" placeholder="按操作类型过滤" clearable />
         <el-button @click="loadAudit">查询</el-button>
       </div>
     </div>
@@ -40,7 +40,11 @@ onMounted(loadAudit)
         <el-table-column prop="resource_type" label="资源" width="160" />
         <el-table-column label="详情" min-width="260">
           <template #default="{ row }">
-            <pre>{{ JSON.stringify(row.detail || {}, null, 2) }}</pre>
+            <el-collapse>
+              <el-collapse-item title="原始数据（开发者）" name="raw-data">
+                <pre>{{ JSON.stringify(row.detail || {}, null, 2) }}</pre>
+              </el-collapse-item>
+            </el-collapse>
           </template>
         </el-table-column>
       </el-table>

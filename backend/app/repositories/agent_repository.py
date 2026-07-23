@@ -28,9 +28,13 @@ class AgentRepository(TenantRepository[Agent]):
             self.db.add(AgentTool(agent_id=agent_id, tool_id=tool_id))
 
     async def get_kb_ids(self, agent_id: UUID) -> list[UUID]:
-        result = await self.db.execute(select(AgentKb.kb_id).where(AgentKb.agent_id == agent_id))
+        result = await self.db.execute(
+            select(AgentKb.kb_id).where(AgentKb.agent_id == agent_id)
+        )
         return list(result.scalars().all())
 
     async def get_tool_ids(self, agent_id: UUID) -> list[UUID]:
-        result = await self.db.execute(select(AgentTool.tool_id).where(AgentTool.agent_id == agent_id))
+        result = await self.db.execute(
+            select(AgentTool.tool_id).where(AgentTool.agent_id == agent_id)
+        )
         return list(result.scalars().all())

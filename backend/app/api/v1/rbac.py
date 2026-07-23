@@ -15,11 +15,15 @@ async def list_roles(
     auth: AuthContext = Depends(require_perm("role:view")),
     db: AsyncSession = Depends(get_db),
 ) -> list[Role]:
-    result = await db.execute(select(Role).where(Role.tenant_id == auth.tenant_id).order_by(Role.code))
+    result = await db.execute(
+        select(Role).where(Role.tenant_id == auth.tenant_id).order_by(Role.code)
+    )
     return list(result.scalars().all())
 
 
-@router.get("/permissions", response_model=list[PermissionOut], summary="List permissions")
+@router.get(
+    "/permissions", response_model=list[PermissionOut], summary="List permissions"
+)
 async def list_permissions(
     _: AuthContext = Depends(require_perm("permission:view")),
     db: AsyncSession = Depends(get_db),

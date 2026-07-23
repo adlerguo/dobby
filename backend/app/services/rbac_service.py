@@ -5,7 +5,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.models import AgentTemplate, Permission, Role, RolePermission, Tenant, User, UserRole
+from app.models import (
+    AgentTemplate,
+    Permission,
+    Role,
+    RolePermission,
+    Tenant,
+    User,
+    UserRole,
+)
 from app.services.agent_templates import AGENT_TEMPLATES, default_config
 
 PERMISSIONS: tuple[tuple[str, str, str], ...] = (
@@ -52,7 +60,9 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
-async def get_by_code(db: AsyncSession, model: type, code: str, tenant_id: UUID | None = None):
+async def get_by_code(
+    db: AsyncSession, model: type, code: str, tenant_id: UUID | None = None
+):
     stmt = select(model).where(model.code == code)
     if tenant_id is not None:
         stmt = stmt.where(model.tenant_id == tenant_id)
@@ -84,16 +94,22 @@ async def ensure_roles_for_tenant(db: AsyncSession, tenant_id: UUID) -> dict[str
             await db.flush()
         roles[code] = role
 
-        await ensure_role_permissions(db, role.id, permissions_for_codes(permissions, ROLE_PERMISSIONS[code]))
+        await ensure_role_permissions(
+            db, role.id, permissions_for_codes(permissions, ROLE_PERMISSIONS[code])
+        )
 
     return roles
 
 
-def permissions_for_codes(permissions: dict[str, Permission], codes: Iterable[str]) -> list[Permission]:
+def permissions_for_codes(
+    permissions: dict[str, Permission], codes: Iterable[str]
+) -> list[Permission]:
     return [permissions[code] for code in codes]
 
 
-async def ensure_role_permissions(db: AsyncSession, role_id: UUID, permissions: Iterable[Permission]) -> None:
+async def ensure_role_permissions(
+    db: AsyncSession, role_id: UUID, permissions: Iterable[Permission]
+) -> None:
     for permission in permissions:
         stmt = select(RolePermission).where(
             RolePermission.role_id == role_id,
@@ -104,14 +120,18 @@ async def ensure_role_permissions(db: AsyncSession, role_id: UUID, permissions: 
             db.add(RolePermission(role_id=role_id, permission_id=permission.id))
 
 
-async def assign_role_codes(db: AsyncSession, user_id: UUID, tenant_id: UUID, role_codes: list[str]) -> list[str]:
+async def assign_role_codes(
+    db: AsyncSession, user_id: UUID, tenant_id: UUID, role_codes: list[str]
+) -> list[str]:
     assigned: list[str] = []
     for role_code in role_codes:
         role = await get_by_code(db, Role, role_code, tenant_id)
         if role is None:
             raise ValueError(f"role_not_found:{role_code}")
 
-        stmt = select(UserRole).where(UserRole.user_id == user_id, UserRole.role_id == role.id)
+        stmt = select(UserRole).where(
+            UserRole.user_id == user_id, UserRole.role_id == role.id
+        )
         result = await db.execute(stmt)
         if result.scalar_one_or_none() is None:
             db.add(UserRole(user_id=user_id, role_id=role.id))

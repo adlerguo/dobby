@@ -29,7 +29,9 @@ async def chat_stream(
     error_detail = sse_error_detail(first_event)
     if error_detail in PRE_STREAM_ERROR_STATUS:
         await events.aclose()
-        raise HTTPException(status_code=PRE_STREAM_ERROR_STATUS[error_detail], detail=error_detail)
+        raise HTTPException(
+            status_code=PRE_STREAM_ERROR_STATUS[error_detail], detail=error_detail
+        )
 
     return StreamingResponse(
         prepend_event(first_event, events),
@@ -41,7 +43,9 @@ async def chat_stream(
     )
 
 
-@router.get("/conversations", response_model=list[ConversationOut], summary="List conversations")
+@router.get(
+    "/conversations", response_model=list[ConversationOut], summary="List conversations"
+)
 async def list_conversations(
     agent_id: UUID | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
@@ -62,15 +66,23 @@ async def list_conversations(
     return list(result.scalars().all())
 
 
-@router.get("/conversations/{conversation_id}", response_model=ConversationOut, summary="Get conversation")
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationOut,
+    summary="Get conversation",
+)
 async def get_conversation(
     conversation_id: UUID,
     auth: AuthContext = Depends(get_current_auth),
     db: AsyncSession = Depends(get_db),
 ) -> Conversation:
-    conversation = await load_conversation(db, tenant_id=auth.tenant_id, conversation_id=conversation_id)
+    conversation = await load_conversation(
+        db, tenant_id=auth.tenant_id, conversation_id=conversation_id
+    )
     if conversation is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="conversation_not_found"
+        )
     return conversation
 
 
@@ -86,13 +98,20 @@ async def list_conversation_messages(
     auth: AuthContext = Depends(get_current_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list:
-    conversation = await load_conversation(db, tenant_id=auth.tenant_id, conversation_id=conversation_id)
+    conversation = await load_conversation(
+        db, tenant_id=auth.tenant_id, conversation_id=conversation_id
+    )
     if conversation is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="conversation_not_found"
+        )
 
     result = await db.execute(
         select(Message)
-        .where(Message.tenant_id == auth.tenant_id, Message.conversation_id == conversation_id)
+        .where(
+            Message.tenant_id == auth.tenant_id,
+            Message.conversation_id == conversation_id,
+        )
         .order_by(Message.created_at.asc())
         .offset(offset)
         .limit(limit)
@@ -100,7 +119,9 @@ async def list_conversation_messages(
     return list(result.scalars().all())
 
 
-async def stream_chat_events(auth: AuthContext, payload: ChatIn) -> AsyncGenerator[str, None]:
+async def stream_chat_events(
+    auth: AuthContext, payload: ChatIn
+) -> AsyncGenerator[str, None]:
     async with SessionLocal() as db:
         try:
             async for event in run_stream_agent_events(
@@ -129,9 +150,13 @@ async def stream_chat_events(auth: AuthContext, payload: ChatIn) -> AsyncGenerat
             return
 
 
-async def load_conversation(db: AsyncSession, *, tenant_id: UUID, conversation_id: UUID) -> Conversation | None:
+async def load_conversation(
+    db: AsyncSession, *, tenant_id: UUID, conversation_id: UUID
+) -> Conversation | None:
     result = await db.execute(
-        select(Conversation).where(Conversation.id == conversation_id, Conversation.tenant_id == tenant_id)
+        select(Conversation).where(
+            Conversation.id == conversation_id, Conversation.tenant_id == tenant_id
+        )
     )
     return result.scalar_one_or_none()
 
@@ -151,7 +176,9 @@ PRE_STREAM_ERROR_STATUS = {
 }
 
 
-async def prepend_event(first_event: str, events: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+async def prepend_event(
+    first_event: str, events: AsyncGenerator[str, None]
+) -> AsyncGenerator[str, None]:
     yield first_event
     async for event in events:
         yield event
@@ -161,7 +188,14 @@ def sse_error_detail(frame: str) -> str | None:
     lines = frame.splitlines()
     if "event: error" not in lines:
         return None
-    data = next((line.removeprefix("data:").strip() for line in lines if line.startswith("data:")), None)
+    data = next(
+        (
+            line.removeprefix("data:").strip()
+            for line in lines
+            if line.startswith("data:")
+        ),
+        None,
+    )
     if data is None:
         return None
     try:

@@ -17,19 +17,19 @@ const workspaces = ref<Workspace[]>([])
 const actionCards = [
   {
     title: '创建智能体',
-    desc: '从模板或空白配置一个业务助手，完成提示词、知识库和工具能力设置。',
+    desc: '从模板或空白开始，配置面向某类业务任务的 AI 助手。',
     action: '进入模板广场',
     to: '/templates',
   },
   {
-    title: '调试知识库',
-    desc: '输入真实业务问题，查看命中片段、分数、来源和调优建议。',
+    title: '命中测试',
+    desc: '使用真实问题进行命中测试，检查企业专属资料库是否能召回正确片段。',
     action: '开始命中测试',
     to: '/kbs',
   },
   {
     title: '发布应用',
-    desc: '把智能体发布到 Web、API 或机器人渠道，形成上线闭环。',
+    desc: '将已验证的智能体发布给业务人员使用，并持续管理访问方式。',
     action: '进入发布中心',
     to: '/publish',
   },
@@ -48,7 +48,7 @@ async function loadDashboard(nextMode: DashboardMode = mode.value) {
             ['运行次数', data.summary?.run_count ?? 0, '次'],
             ['成功率', data.summary?.success_rate ?? 0, '%'],
             ['P95 延迟', data.latency?.p95_ms ?? 0, 'ms'],
-            ['Token', data.token_usage?.total ?? 0, ''],
+            ['资源用量', data.token_usage?.total ?? 0, ''],
           ]
         : (data.scorecards || []).map((item: any) => [item.label, item.value, item.unit || ''])
   } finally {
@@ -71,7 +71,7 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h1>首页工作台</h1>
-        <p>按“创建、调试、发布、优化”的用户任务组织工作，而不是按后台模块堆入口。</p>
+        <p>统览平台运行概况，并快速进入常用操作。</p>
       </div>
       <el-segmented
         v-model="mode"
@@ -120,24 +120,24 @@ onMounted(() => {
         <div class="stack">
           <el-alert
             v-if="agents.some((agent) => agent.status !== 'active')"
-            title="有智能体还未发布，建议完成调试后进入发布中心。"
+            title="有智能体尚未发布。完成问答验证后，可进入发布中心提供给业务人员使用。"
             type="warning"
             :closable="false"
           />
           <el-alert
             v-if="kbs.length"
-            title="建议定期使用知识库实验台检查低分召回和引用质量。"
+            title="建议定期使用命中测试检查知识库召回效果与引用质量。"
             type="info"
             :closable="false"
           />
-          <el-alert title="下一步可配置发布渠道，把可用智能体交付给业务人员。" type="success" :closable="false" />
+          <el-alert title="下一步可发布已验证的智能体，让业务人员直接使用。" type="success" :closable="false" />
         </div>
       </article>
       <article class="panel-card">
         <div class="card-header">
           <h2>{{ mode === 'executive' ? '结论摘要' : '最近运行' }}</h2>
         </div>
-        <p v-if="mode === 'executive'" class="muted">{{ detail.headline || '暂无摘要' }}</p>
+        <p v-if="mode === 'executive'" class="muted">{{ detail.headline || '当前暂无摘要。可先创建智能体并完成一次问答验证。' }}</p>
         <el-timeline v-else>
           <el-timeline-item v-for="run in (detail.recent_runs || [])" :key="run.trace_id || run.id">
             {{ run.agent_name || '未知智能体' }} · {{ run.status }} · {{ run.latency_ms || 0 }}ms
@@ -149,9 +149,13 @@ onMounted(() => {
     <div class="grid two">
       <article class="panel-card">
         <div class="card-header">
-          <h2>{{ mode === 'executive' ? '业务构成' : 'Span 类型' }}</h2>
+          <h2>{{ mode === 'executive' ? '业务构成' : '运行环节' }}</h2>
         </div>
-        <pre>{{ JSON.stringify(mode === 'executive' ? detail.business_mix || [] : detail.spans_by_type || {}, null, 2) }}</pre>
+        <el-collapse>
+          <el-collapse-item title="原始数据（开发者）" name="raw-data">
+            <pre>{{ JSON.stringify(mode === 'executive' ? detail.business_mix || [] : detail.spans_by_type || {}, null, 2) }}</pre>
+          </el-collapse-item>
+        </el-collapse>
       </article>
       <article class="panel-card">
         <div class="card-header">

@@ -19,4 +19,3 @@ async def healthz() -> HealthOut:
         status="ok",
         version=settings.app_version,
     )
-

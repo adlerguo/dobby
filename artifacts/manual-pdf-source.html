@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>黄浦区妇儿工作智能AI助手操作手册</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+
+<style>
+@page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+:root { --accent:#2E74B5; --dark:#1F4D78; --muted:#5b6673; --line:#d8dee8; --soft:#f4f7fb; --warn:#fff4e8; }
+body { font-family: "Heiti SC", "Hiragino Sans GB", "Songti SC", "Arial Unicode MS", sans-serif; color:#1f2328; line-height:1.65; font-size:14px; }
+h1 { text-align:center; font-size:26px; margin: 8px 0 6px; color:#111827; }
+h2 { font-size:19px; color:var(--accent); border-bottom:1px solid var(--line); padding-bottom:4px; margin-top:22px; }
+h3 { font-size:16px; color:var(--dark); margin-top:16px; }
+p { margin: 7px 0; }
+ul, ol { padding-left: 1.5em; margin: 7px 0; }
+li { margin: 3px 0; }
+table { width:100%; border-collapse:collapse; margin: 10px 0 14px; font-size:12.4px; page-break-inside:auto; }
+th, td { border:1px solid var(--line); padding:7px 8px; vertical-align:top; }
+th { background:#e8eef5; color:#172033; }
+blockquote { border-left:4px solid var(--accent); margin: 10px 0; padding: 6px 12px; background:var(--soft); }
+code { font-family: "SFMono-Regular", Menlo, monospace; font-size: 0.92em; background:#f6f8fa; padding:1px 4px; border-radius:4px; }
+img { display:block; max-width: 92%; max-height: 145mm; margin: 10px auto 6px; border:1px solid #e5e7eb; border-radius:6px; box-shadow:0 4px 14px rgba(15,23,42,.08); }
+figure { margin: 12px 0; page-break-inside: avoid; }
+figcaption { text-align:center; color:var(--muted); font-size:12px; }
+a { color:var(--accent); }
+hr { border:0; border-top:1px solid var(--line); margin:18px 0; }
+body > p:nth-of-type(1), body > p:nth-of-type(2), body > p:nth-of-type(3) { text-align:center; color:var(--muted); }
+h1 + p + p + p { background: var(--warn); border:1px solid #ffe0c2; padding:10px 12px; border-radius:8px; text-align:left; color:#3b2a22; }
+</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">黄浦区妇儿工作智能AI助手操作手册</h1>
+</header>
+<h1
+id="黄浦区妇儿工作智能ai助手操作手册">黄浦区妇儿工作智能AI助手操作手册</h1>
+<p>适用对象：街道、居委、妇联窗口及一线服务人员<br />
+版本日期：2026年7月22日<br />
+访问地址：http://112.64.45.22:8088/#/</p>
+<h2 id="产品简介">1. 产品简介</h2>
+<p>黄浦区妇儿工作智能AI助手是一套面向妇女儿童权益保护、家庭服务引导和普法宣传的在线服务工具。平台以“妇女儿童关爱助手”为统一入口，帮助街道人员和居民快速获得基础咨询、服务点信息、权益保护提示、家庭云服务介绍和普法学习内容。</p>
+<p>平台定位是“先行引导、信息整理、风险提示、服务转介”。它可以帮助用户初步梳理问题，但不能替代公安、法院、法律援助、心理咨询、社工等专业处置。</p>
+<h2 id="主要功能">2. 主要功能</h2>
+<h3 id="妇儿工作智能ai助手">2.1 妇儿工作智能AI助手</h3>
+<p>用于回答妇女儿童权益、家庭暴力应对、儿童安全、法律援助、家庭关系等常见问题。用户可直接输入问题，也可由街道人员代为输入并解读回答。</p>
+<p>常见问题示例：</p>
+<ul>
+<li>遭遇家暴怎么办？</li>
+<li>如何申请法律援助？</li>
+<li>儿童网络安全要注意什么？</li>
+<li>我的婚姻家庭权益有哪些？</li>
+</ul>
+<p>页面底部提示“内容由 AI 生成，仅供参考，请注意甄别”。一线人员应把 AI
+回答作为初步参考，涉及人身危险、法律程序、心理危机时要及时转接人工渠道。</p>
+<figure>
+<img src="manual-screenshots/01-home-chat.png" alt="01-home-chat" />
+<figcaption aria-hidden="true">01-home-chat</figcaption>
+</figure>
+<h3 id="登录与问答记录">2.2 登录与问答记录</h3>
+<p>登录后，系统可保存问答记录，便于后续继续查看和跟进。未登录状态下，问答不会保存。</p>
+<p>登录账号：</p>
+<ul>
+<li>手机号：18601726407</li>
+<li>密码：123123</li>
+</ul>
+<p>登录入口在页面右上角“登录”按钮。点击后输入手机号和密码，再点击“确认登录”。登录成功后，按钮会显示“已登录”。</p>
+<p><img src="manual-screenshots/02-login-modal.png"
+alt="02-login-modal" /> <img src="manual-screenshots/03-logged-in.png"
+alt="03-logged-in" /></p>
+<h3 id="隐私保护">2.3 隐私保护</h3>
+<p>登录后可使用“隐私保护”模式。开启后，本次问答仅临时显示，不写入历史记录。</p>
+<p>建议使用场景：</p>
+<ul>
+<li>居民问题较敏感，不希望保存到历史记录。</li>
+<li>只做现场临时咨询或演示。</li>
+<li>问题中涉及家庭矛盾、伤情、个人经历等隐私内容。</li>
+</ul>
+<p>注意：无论是否开启隐私保护，都不建议在 AI
+对话中输入身份证号、完整家庭住址、银行卡号、未成年人详细身份信息等非必要敏感信息。</p>
+<figure>
+<img src="manual-screenshots/07-privacy-info.png"
+alt="07-privacy-info" />
+<figcaption aria-hidden="true">07-privacy-info</figcaption>
+</figure>
+<h3 id="我的问答记录">2.4 我的问答记录</h3>
+<p>点击右上角菜单“☰”，选择“我的问答记录”，可查看登录状态下保存过的历史问答。</p>
+<p>使用建议：</p>
+<ul>
+<li>需要连续跟进的咨询，可提醒工作人员先登录再咨询。</li>
+<li>若居民要求不留痕，应开启隐私保护或保持未登录状态。</li>
+<li>历史记录用于回看问题和回答，不等同于正式受理记录。</li>
+</ul>
+<figure>
+<img src="manual-screenshots/06-more-menu.png" alt="06-more-menu" />
+<figcaption aria-hidden="true">06-more-menu</figcaption>
+</figure>
+<h3 id="家庭云服务">2.5 家庭云服务</h3>
+<p>桌面端提供“家庭云服务”展示区，介绍家庭全生命周期和家庭服务相关内容。</p>
+<p>家庭全生命周期包括：</p>
+<ul>
+<li>婚姻服务：婚恋指导、婚姻登记、家庭辅导</li>
+<li>生育支持：孕产关怀、母婴服务、育儿指导</li>
+<li>儿童成长：教育资源、成长陪伴、安全守护</li>
+<li>老年生活：健康养老、文化生活、关爱服务</li>
+<li>身后事：殡葬指引、法律咨询、暖心陪伴</li>
+</ul>
+<p>家庭服务包括：</p>
+<ul>
+<li>家庭健康</li>
+<li>家庭出行</li>
+<li>家庭证明</li>
+<li>家庭住房</li>
+<li>家庭保障</li>
+<li>家庭教育</li>
+</ul>
+<p>服务入口提示：可通过“随申办”进入黄浦旗舰店的家庭云服务。</p>
+<figure>
+<img src="manual-screenshots/04-family-service.png"
+alt="04-family-service" />
+<figcaption aria-hidden="true">04-family-service</figcaption>
+</figure>
+<h3 id="服务信息">2.6 服务信息</h3>
+<p>服务信息用于查询妇联维权、法律援助、心理服务等人工服务渠道。手机端也提供“服务信息”独立入口，方便一线人员现场查看和复制电话。</p>
+<p>当前页面展示的服务渠道：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>服务名称</th>
+<th>地址</th>
+<th>联系方式与时间</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>黄浦区12338妇联维权服务中心</td>
+<td>黄浦区中山南一路1105号</td>
+<td>021-53068792；上午9:00-11:30，下午13:30-16:30，法定节假日除外</td>
+</tr>
+<tr>
+<td>黄浦区法律援助中心妇联分中心</td>
+<td>瞿溪路1190号</td>
+<td>021-63162431；周二、周五13:00-16:00</td>
+</tr>
+<tr>
+<td>黄浦区妇联心理服务工作站</td>
+<td>局门路363号</td>
+<td>63288361-0；周六13:30-17:00</td>
+</tr>
+</tbody>
+</table>
+<p>服务信息适合在 AI
+回答后用于人工转介。遇到紧急人身危险，应先建议拨打110。</p>
+<figure>
+<img src="manual-screenshots/09-mobile-service.png"
+alt="09-mobile-service" />
+<figcaption aria-hidden="true">09-mobile-service</figcaption>
+</figure>
+<h3 id="巾帼普法挑战赛">2.7 巾帼普法挑战赛</h3>
+<p>“巾帼普法挑战赛”是互动学习模块，通过案例闯关方式帮助工作人员和居民了解妇女权益保护相关知识。</p>
+<p>桌面端展示为故事闯关形式，内容包括性骚扰识别、用人单位责任、女职工婚育权益、夫妻共同财产、离婚诉讼财产调查等案例。手机端为五关选择题模式，强调安全优先、隐私保护、专业转介等原则。</p>
+<p>使用建议：</p>
+<ul>
+<li>可用于活动现场的普法互动。</li>
+<li>可作为街道人员培训时的热身练习。</li>
+<li>不建议把游戏结果作为个案处理依据。</li>
+</ul>
+<figure>
+<img src="manual-screenshots/05-law-game.png" alt="05-law-game" />
+<figcaption aria-hidden="true">05-law-game</figcaption>
+</figure>
+<h3 id="妇女发展儿童成长家庭建设专题">2.8
+妇女发展、儿童成长、家庭建设专题</h3>
+<p>桌面端右侧有三个专题卡片：</p>
+<ul>
+<li>妇女发展：展示黄浦巾帼、妇女发展相关内容。</li>
+<li>儿童成长：展示儿童友好、安全守护和成长服务内容。</li>
+<li>家庭建设：展示家庭关系、权益保护和家庭服务内容。</li>
+</ul>
+<p>点击卡片后，会打开专题抽屉，支持下拉查看详情；部分内容还包含视频入口。</p>
+<h2 id="基础操作流程">3. 基础操作流程</h2>
+<h3 id="登录系统">3.1 登录系统</h3>
+<ol type="1">
+<li>打开访问地址：http://112.64.45.22:8088/#/</li>
+<li>点击右上角“登录”。</li>
+<li>输入手机号和密码。</li>
+<li>点击“确认登录”。</li>
+<li>看到右上角显示“已登录”，表示登录成功。</li>
+</ol>
+<h3 id="使用-ai-咨询">3.2 使用 AI 咨询</h3>
+<ol type="1">
+<li>进入“妇儿工作智能AI助手”页签。</li>
+<li>在底部输入框输入问题。</li>
+<li>点击发送按钮。</li>
+<li>等待 AI 回复。</li>
+<li>根据回答判断是否需要转接人工服务。</li>
+</ol>
+<p>建议提问方式：</p>
+<ul>
+<li>把问题说清楚，例如“居民想咨询遭遇家庭暴力后如何求助”。</li>
+<li>一次只问一个主题，便于回答更清晰。</li>
+<li>不输入不必要的身份证、住址、银行卡等敏感信息。</li>
+</ul>
+<h3 id="查看服务电话">3.3 查看服务电话</h3>
+<ol type="1">
+<li>手机端点击顶部“服务信息”；桌面端可查看右侧服务区域或家庭云服务入口。</li>
+<li>找到对应服务点。</li>
+<li>点击“复制”按钮复制电话，或直接拨打。</li>
+<li>告知居民服务时间和地址。</li>
+</ol>
+<h3 id="查看历史记录">3.4 查看历史记录</h3>
+<ol type="1">
+<li>确认已登录。</li>
+<li>点击右上角“☰”。</li>
+<li>点击“我的问答记录”。</li>
+<li>在弹窗中查看历史咨询记录。</li>
+</ol>
+<h3 id="开启隐私保护">3.5 开启隐私保护</h3>
+<ol type="1">
+<li>确认已登录。</li>
+<li>点击右上角“隐私保护”。</li>
+<li>页面显示“隐私保护中”后，本次问答不会写入历史。</li>
+<li>如需继续保存记录，再次点击关闭隐私保护。</li>
+</ol>
+<h2 id="街道人员使用建议">4. 街道人员使用建议</h2>
+<h3 id="可直接使用的场景">4.1 可直接使用的场景</h3>
+<ul>
+<li>居民咨询妇女儿童权益保护基础问题。</li>
+<li>居民不清楚应联系哪个服务点。</li>
+<li>工作人员需要快速整理求助清单。</li>
+<li>普法活动中进行互动学习。</li>
+<li>日常窗口服务中辅助解释政策和服务路径。</li>
+</ul>
+<h3 id="需要转人工的场景">4.2 需要转人工的场景</h3>
+<p>以下情况不要只依赖 AI 回答，应及时转人工或提醒居民联系专业部门：</p>
+<ul>
+<li>居民或儿童存在即时人身危险。</li>
+<li>涉及家庭暴力、威胁、跟踪、伤害等风险。</li>
+<li>涉及报警、保护令、诉讼、离婚财产、抚养权等具体法律程序。</li>
+<li>居民出现严重心理危机、极端情绪或自伤风险。</li>
+<li>涉及未成年人保护、监护失当、虐待、性侵等敏感个案。</li>
+</ul>
+<p>紧急情况优先拨打110。AI 可以帮助整理信息，但不能替代正式处置。</p>
+<h3 id="对居民的推荐话术">4.3 对居民的推荐话术</h3>
+<p>“这个小助手可以先帮您把问题梳理清楚，并提供基本的求助方向。AI
+回答仅供参考，如果涉及人身安全、法律程序或心理危机，我们会帮您转接到妇联维权、法律援助、心理服务或公安等专业渠道。”</p>
+<h2 id="注意事项">5. 注意事项</h2>
+<ul>
+<li>AI 回答仅供参考，不能作为正式法律意见或行政处理结论。</li>
+<li>不建议输入身份证号、完整住址、银行卡号、未成年人详细身份信息等敏感内容。</li>
+<li>遇到家暴、人身威胁、儿童安全风险，应优先保障安全并联系110或人工服务。</li>
+<li>登录后会保存问答记录；不希望保存时，请开启隐私保护。</li>
+<li>历史记录主要用于回看，不等同于街道或妇联系统正式受理记录。</li>
+</ul>
+</body>
+</html>

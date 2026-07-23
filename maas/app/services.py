@@ -422,6 +422,30 @@ async def mark_channel_health(db: AsyncSession, channel_id: UUID, health: str) -
     await db.commit()
 
 
+def channel_failure_key(channel_id: UUID) -> str:
+    return f"channel:{channel_id}:failures"
+
+
+def channel_failure_ttl(threshold: int) -> int:
+    return max(int(settings.channel_failed_ttl) * max(int(threshold), 1), 300)
+
+
+async def register_channel_failure(redis: Redis, db: AsyncSession, channel_id: UUID, threshold: int) -> int:
+    effective_threshold = max(int(threshold), 1)
+    key = channel_failure_key(channel_id)
+    count = int(await redis.incr(key))
+    await redis.expire(key, channel_failure_ttl(effective_threshold))
+    if count >= effective_threshold:
+        await mark_channel_health(db, channel_id, "failed")
+        await redis.delete(key)
+    return count
+
+
+async def register_channel_success(redis: Redis, db: AsyncSession, channel_id: UUID) -> None:
+    await redis.delete(channel_failure_key(channel_id))
+    await mark_channel_health(db, channel_id, "ok")
+
+
 async def record_usage(
     db: AsyncSession,
     channel: dict[str, Any],

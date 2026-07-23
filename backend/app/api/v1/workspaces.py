@@ -5,7 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_perm
 from app.core.database import get_db
-from app.schemas import WorkspaceCreate, WorkspaceOut, WorkspaceResourceIn, WorkspaceUpdate
+from app.schemas import (
+    WorkspaceCreate,
+    WorkspaceOut,
+    WorkspaceResourceIn,
+    WorkspaceUpdate,
+)
 from app.services import (
     attach_workspace_resource,
     create_workspace,
@@ -36,7 +41,12 @@ async def list_workspace_api(
     return await list_workspaces(db, tenant_id=auth.tenant_id)
 
 
-@router.post("", response_model=WorkspaceOut, status_code=status.HTTP_201_CREATED, summary="Create workspace")
+@router.post(
+    "",
+    response_model=WorkspaceOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create workspace",
+)
 async def create_workspace_api(
     payload: WorkspaceCreate,
     request: Request,
@@ -44,7 +54,9 @@ async def create_workspace_api(
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
     try:
-        workspace = await create_workspace(db, tenant_id=auth.tenant_id, user_id=auth.user_id, payload=payload)
+        workspace = await create_workspace(
+            db, tenant_id=auth.tenant_id, user_id=auth.user_id, payload=payload
+        )
     except ValueError as exc:
         raise workspace_error(exc) from exc
     await write_audit(
@@ -66,13 +78,19 @@ async def get_workspace_api(
     auth: AuthContext = Depends(require_perm("dashboard:view")),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
-    workspace = await get_workspace(db, tenant_id=auth.tenant_id, workspace_id=workspace_id)
+    workspace = await get_workspace(
+        db, tenant_id=auth.tenant_id, workspace_id=workspace_id
+    )
     if workspace is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workspace_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="workspace_not_found"
+        )
     return workspace
 
 
-@router.patch("/{workspace_id}", response_model=WorkspaceOut, summary="Update workspace")
+@router.patch(
+    "/{workspace_id}", response_model=WorkspaceOut, summary="Update workspace"
+)
 async def update_workspace_api(
     workspace_id: UUID,
     payload: WorkspaceUpdate,
@@ -81,11 +99,15 @@ async def update_workspace_api(
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
     try:
-        workspace = await update_workspace(db, tenant_id=auth.tenant_id, workspace_id=workspace_id, payload=payload)
+        workspace = await update_workspace(
+            db, tenant_id=auth.tenant_id, workspace_id=workspace_id, payload=payload
+        )
     except ValueError as exc:
         raise workspace_error(exc) from exc
     if workspace is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workspace_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="workspace_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -99,7 +121,11 @@ async def update_workspace_api(
     return workspace
 
 
-@router.post("/{workspace_id}/resources", response_model=WorkspaceOut, summary="Attach workspace resource")
+@router.post(
+    "/{workspace_id}/resources",
+    response_model=WorkspaceOut,
+    summary="Attach workspace resource",
+)
 async def attach_workspace_resource_api(
     workspace_id: UUID,
     payload: WorkspaceResourceIn,
@@ -117,7 +143,9 @@ async def attach_workspace_resource_api(
     except ValueError as exc:
         raise workspace_error(exc) from exc
     if workspace is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workspace_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="workspace_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -125,13 +153,20 @@ async def attach_workspace_resource_api(
         action="workspace.attach_resource",
         resource_type="workspace",
         resource_id=workspace.id,
-        detail={"resource_type": payload.resource_type, "resource_id": str(payload.resource_id)},
+        detail={
+            "resource_type": payload.resource_type,
+            "resource_id": str(payload.resource_id),
+        },
         request=request,
     )
     return workspace
 
 
-@router.delete("/{workspace_id}/resources", status_code=status.HTTP_204_NO_CONTENT, summary="Detach workspace resource")
+@router.delete(
+    "/{workspace_id}/resources",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Detach workspace resource",
+)
 async def detach_workspace_resource_api(
     workspace_id: UUID,
     payload: WorkspaceResourceIn,
@@ -146,7 +181,9 @@ async def detach_workspace_resource_api(
         payload=payload,
     )
     if not detached:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workspace_resource_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="workspace_resource_not_found"
+        )
     await write_audit(
         db,
         tenant_id=auth.tenant_id,
@@ -154,6 +191,9 @@ async def detach_workspace_resource_api(
         action="workspace.detach_resource",
         resource_type="workspace",
         resource_id=workspace_id,
-        detail={"resource_type": payload.resource_type, "resource_id": str(payload.resource_id)},
+        detail={
+            "resource_type": payload.resource_type,
+            "resource_id": str(payload.resource_id),
+        },
         request=request,
     )

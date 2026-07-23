@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_service_token
 from app.core.cache import get_redis
+from app.core.config import settings
 from app.core.database import get_db
 from app.models import models
 from app.schemas import ChatCompletionIn, EmbeddingIn, ModelOut
@@ -18,11 +19,12 @@ from app.services import (
     apply_request_defaults,
     get_cached,
     list_candidate_channels,
-    mark_channel_health,
     mock_chat_response,
     mock_embedding_response,
     proxy_openai,
     proxy_openai_stream,
+    register_channel_failure,
+    register_channel_success,
     record_usage,
     set_cached,
     weighted_choice,
@@ -73,12 +75,12 @@ async def chat_completions(
             else:
                 response = await proxy_openai("/v1/chat/completions", channel, request_payload)
             latency_ms = int((time.perf_counter() - started) * 1000)
-            await mark_channel_health(db, channel["id"], "ok")
+            await register_channel_success(redis, db, channel["id"])
             await set_cached(redis, "chat", request_payload, response)
             await record_usage(db, channel, response, latency_ms=latency_ms, cache_hit=False)
             return response
         except Exception as exc:
-            await mark_channel_health(db, channel["id"], "failed")
+            await register_channel_failure(redis, db, channel["id"], settings.channel_failure_threshold)
             last_error = summarize_runtime_error(exc)
 
     raise HTTPException(status_code=429 if last_error == "rate_limited" else 502, detail=last_error)
@@ -119,12 +121,12 @@ async def embeddings(
             else:
                 response = await proxy_openai("/v1/embeddings", channel, effective_payload)
             latency_ms = int((time.perf_counter() - started) * 1000)
-            await mark_channel_health(db, channel["id"], "ok")
+            await register_channel_success(redis, db, channel["id"])
             await set_cached(redis, "embedding", effective_payload, response)
             await record_usage(db, channel, response, latency_ms=latency_ms, cache_hit=False)
             return response
         except Exception as exc:
-            await mark_channel_health(db, channel["id"], "failed")
+            await register_channel_failure(redis, db, channel["id"], settings.channel_failure_threshold)
             last_error = summarize_runtime_error(exc)
 
     raise HTTPException(status_code=429 if last_error == "rate_limited" else 502, detail=last_error)
@@ -160,6 +162,7 @@ async def stream_chat_completion(
                 async for chunk in mock_chat_stream(payload.model, [message.model_dump() for message in payload.messages]):
                     yield chunk
                 response = mock_chat_response(payload.model, [message.model_dump() for message in payload.messages])
+                await register_channel_success(redis, db, channel["id"])
                 await record_usage(db, channel, response, latency_ms=int((time.perf_counter() - started) * 1000), cache_hit=False)
                 return
 
@@ -175,12 +178,12 @@ async def stream_chat_completion(
                         except json.JSONDecodeError:
                             pass
                 yield event["raw"]
-            await mark_channel_health(db, channel["id"], "ok")
+            await register_channel_success(redis, db, channel["id"])
             response = {"usage": usage}
             await record_usage(db, channel, response, latency_ms=int((time.perf_counter() - started) * 1000), cache_hit=False)
             return
         except Exception as exc:
-            await mark_channel_health(db, channel["id"], "failed")
+            await register_channel_failure(redis, db, channel["id"], settings.channel_failure_threshold)
             last_error = summarize_runtime_error(exc)
             continue
 

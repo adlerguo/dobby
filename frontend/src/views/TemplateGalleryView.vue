@@ -19,7 +19,7 @@ const templateCards = computed(() =>
       const ui = (template.default_config?.ui || {}) as Record<string, any>
       const persona = template.persona || String(template.default_config?.persona || '')
       const category = ui.category || categoryFromType(template.type)
-      const description = ui.description || persona || '适合快速创建一个可调试、可发布的业务智能体。'
+      const description = ui.description || persona || '适合快速创建一个面向业务任务的 AI 助手。'
       const sampleQuestions = ui.sample_questions || ['这个助手适合什么场景？', '如何配置知识库？', '如何验证效果？']
       return { template, category, description, sampleQuestions }
     })
@@ -54,7 +54,7 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h1>模板广场</h1>
-        <p>像应用市场一样浏览智能体模板，按场景选择，再进入创建向导。</p>
+        <p>按业务场景浏览智能体模板，选择合适模板后即可进入创建向导。</p>
       </div>
       <el-input v-model="keyword" style="max-width: 340px" placeholder="搜索场景、部门、能力" />
     </div>
@@ -73,7 +73,7 @@ onMounted(async () => {
               <div class="tag-row">
                 <el-tag effect="plain">{{ item.category }}</el-tag>
                 <el-tag effect="plain">{{ item.template.type }}</el-tag>
-                <el-tag effect="plain">RAG</el-tag>
+                <el-tag effect="plain">知识库问答</el-tag>
                 <el-tag effect="plain">引用回答</el-tag>
               </div>
               <div class="template-questions">
@@ -97,13 +97,17 @@ onMounted(async () => {
         </div>
         <div v-if="preview" class="stack">
           <h3>{{ preview.name }}</h3>
-          <p class="muted">这个模板会帮你创建默认提示词、推荐问题、知识库策略和调试入口。</p>
-          <pre>{{ JSON.stringify(preview.default_config || {}, null, 2) }}</pre>
+          <p class="muted">这个模板会提供默认提示词、推荐问题、知识库配置和对话验证入口。</p>
+          <el-collapse>
+            <el-collapse-item title="原始数据（开发者）" name="raw-data">
+              <pre>{{ JSON.stringify(preview.default_config || {}, null, 2) }}</pre>
+            </el-collapse-item>
+          </el-collapse>
           <div class="card-actions">
             <el-button type="primary" @click="createFromTemplate(preview)">使用这个模板</el-button>
           </div>
         </div>
-        <div v-else class="empty">请选择一个模板。</div>
+        <div v-else class="empty">请在左侧选择一个模板，查看适用场景与创建入口。</div>
       </aside>
     </div>
   </section>

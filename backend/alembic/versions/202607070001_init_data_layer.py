@@ -136,9 +136,13 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("create index ix_chunks_embedding on chunks using hnsw (embedding vector_cosine_ops)")
+    op.execute(
+        "create index ix_chunks_embedding on chunks using hnsw (embedding vector_cosine_ops)"
+    )
     op.execute("create index ix_chunks_kb_id on chunks (kb_id)")
-    op.execute("create index chunks_content_fts on chunks using gin (to_tsvector('simple', content))")
+    op.execute(
+        "create index chunks_content_fts on chunks using gin (to_tsvector('simple', content))"
+    )
 
     op.execute(
         """
@@ -284,7 +288,9 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("create index ix_usage_records_tenant_id_created_at on usage_records (tenant_id, created_at)")
+    op.execute(
+        "create index ix_usage_records_tenant_id_created_at on usage_records (tenant_id, created_at)"
+    )
 
     op.execute(
         """
@@ -339,7 +345,9 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("create index ix_run_traces_conversation_id on run_traces (conversation_id)")
+    op.execute(
+        "create index ix_run_traces_conversation_id on run_traces (conversation_id)"
+    )
     op.execute(
         """
         create table audit_logs (
@@ -397,7 +405,9 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("create index ix_experiences_embedding on experiences using hnsw (embedding vector_cosine_ops)")
+    op.execute(
+        "create index ix_experiences_embedding on experiences using hnsw (embedding vector_cosine_ops)"
+    )
 
     op.execute(
         """

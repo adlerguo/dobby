@@ -1,3 +1,4 @@
+import math
 from decimal import Decimal
 from uuid import UUID
 
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Agent, EvalCase, EvalRun, Experience
 from app.orchestrator import dispatch_single_agent
+from app.rag.embeddings import DEFAULT_EMBEDDING_MODEL, embed_texts
 from app.schemas import (
     AgentRunIn,
     EvalCaseCreate,
@@ -17,7 +19,9 @@ from app.schemas import (
 )
 
 
-async def list_eval_cases(db: AsyncSession, *, tenant_id: UUID, scene: str | None = None) -> list[EvalCase]:
+async def list_eval_cases(
+    db: AsyncSession, *, tenant_id: UUID, scene: str | None = None
+) -> list[EvalCase]:
     stmt = select(EvalCase).where(EvalCase.tenant_id == tenant_id).order_by(EvalCase.id)
     if scene:
         stmt = stmt.where(EvalCase.scene == scene)
@@ -25,14 +29,18 @@ async def list_eval_cases(db: AsyncSession, *, tenant_id: UUID, scene: str | Non
     return list(result.scalars().all())
 
 
-async def create_eval_case(db: AsyncSession, *, tenant_id: UUID, payload: EvalCaseCreate) -> EvalCase:
+async def create_eval_case(
+    db: AsyncSession, *, tenant_id: UUID, payload: EvalCaseCreate
+) -> EvalCase:
     case = EvalCase(
         tenant_id=tenant_id,
         scene=payload.scene,
         input=payload.input,
         expected=payload.expected,
         assert_type=payload.assert_type,
-        threshold=Decimal(str(payload.threshold)) if payload.threshold is not None else None,
+        threshold=Decimal(str(payload.threshold))
+        if payload.threshold is not None
+        else None,
     )
     db.add(case)
     await db.commit()
@@ -40,8 +48,12 @@ async def create_eval_case(db: AsyncSession, *, tenant_id: UUID, payload: EvalCa
     return case
 
 
-async def get_eval_case(db: AsyncSession, *, tenant_id: UUID, case_id: UUID) -> EvalCase | None:
-    result = await db.execute(select(EvalCase).where(EvalCase.id == case_id, EvalCase.tenant_id == tenant_id))
+async def get_eval_case(
+    db: AsyncSession, *, tenant_id: UUID, case_id: UUID
+) -> EvalCase | None:
+    result = await db.execute(
+        select(EvalCase).where(EvalCase.id == case_id, EvalCase.tenant_id == tenant_id)
+    )
     return result.scalar_one_or_none()
 
 
@@ -67,7 +79,9 @@ async def update_eval_case(
 
 
 async def delete_eval_case(db: AsyncSession, *, tenant_id: UUID, case_id: UUID) -> bool:
-    result = await db.execute(delete(EvalCase).where(EvalCase.id == case_id, EvalCase.tenant_id == tenant_id))
+    result = await db.execute(
+        delete(EvalCase).where(EvalCase.id == case_id, EvalCase.tenant_id == tenant_id)
+    )
     await db.commit()
     return bool(result.rowcount)
 
@@ -104,7 +118,26 @@ async def run_agent_eval(
         if result is None:
             raise ValueError("agent_not_found")
 
-        assessment = assess_eval_case(case, result.answer, result.tool_results, result.citations, result.usage)
+        semantic_score: float | None = None
+        semantic_embedding_failed = False
+        if case.assert_type == "semantic":
+            try:
+                semantic_score = await calculate_semantic_similarity(
+                    result.answer, case.expected
+                )
+            except Exception:
+                semantic_score = 0.0
+                semantic_embedding_failed = True
+
+        assessment = assess_eval_case(
+            case,
+            result.answer,
+            result.tool_results,
+            result.citations,
+            result.usage,
+            semantic_score=semantic_score,
+            semantic_embedding_failed=semantic_embedding_failed,
+        )
         eval_run = EvalRun(
             tenant_id=tenant_id,
             agent_id=agent_id,
@@ -157,7 +190,9 @@ async def run_agent_eval(
     )
 
 
-async def list_eval_runs(db: AsyncSession, *, tenant_id: UUID, agent_id: UUID, limit: int) -> list[EvalRun]:
+async def list_eval_runs(
+    db: AsyncSession, *, tenant_id: UUID, agent_id: UUID, limit: int
+) -> list[EvalRun]:
     result = await db.execute(
         select(EvalRun)
         .where(EvalRun.tenant_id == tenant_id, EvalRun.agent_id == agent_id)
@@ -207,12 +242,16 @@ async def search_experiences(
     )
     if query:
         pattern = f"%{query}%"
-        stmt = stmt.where(or_(Experience.scene.ilike(pattern), Experience.content.ilike(pattern)))
+        stmt = stmt.where(
+            or_(Experience.scene.ilike(pattern), Experience.content.ilike(pattern))
+        )
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
-async def load_eval_cases(db: AsyncSession, *, tenant_id: UUID, case_ids: list[UUID]) -> list[EvalCase]:
+async def load_eval_cases(
+    db: AsyncSession, *, tenant_id: UUID, case_ids: list[UUID]
+) -> list[EvalCase]:
     stmt = select(EvalCase).where(EvalCase.tenant_id == tenant_id)
     if case_ids:
         stmt = stmt.where(EvalCase.id.in_(case_ids))
@@ -223,7 +262,42 @@ async def load_eval_cases(db: AsyncSession, *, tenant_id: UUID, case_ids: list[U
     return cases
 
 
-def assess_eval_case(case: EvalCase, answer: str, tool_results: list, citations: list, usage: dict) -> dict:
+async def calculate_semantic_similarity(
+    answer: str | None, expected: str | None
+) -> float:
+    normalized_answer = (answer or "").strip()
+    normalized_expected = (expected or "").strip()
+    if not normalized_answer or not normalized_expected:
+        return 0.0
+
+    answer_embedding, expected_embedding = await embed_texts(
+        model=DEFAULT_EMBEDDING_MODEL,
+        texts=[normalized_answer, normalized_expected],
+    )
+    return cosine_similarity(answer_embedding, expected_embedding)
+
+
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if not left_norm or not right_norm:
+        return 0.0
+    return dot / (left_norm * right_norm)
+
+
+def assess_eval_case(
+    case: EvalCase,
+    answer: str,
+    tool_results: list,
+    citations: list,
+    usage: dict,
+    *,
+    semantic_score: float | None = None,
+    semantic_embedding_failed: bool = False,
+) -> dict:
     assert_type = case.assert_type or "contains"
     expected = case.expected or ""
     threshold = float(case.threshold) if case.threshold is not None else None
@@ -231,36 +305,101 @@ def assess_eval_case(case: EvalCase, answer: str, tool_results: list, citations:
     normalized_expected = expected.strip()
 
     if assert_type == "always_pass":
-        return {"assert_type": assert_type, "score": 1.0, "passed": True, "reason": "always_pass"}
+        return {
+            "assert_type": assert_type,
+            "score": 1.0,
+            "passed": True,
+            "reason": "always_pass",
+        }
 
     if assert_type == "contains":
-        passed = normalized_expected in normalized_answer if normalized_expected else bool(normalized_answer)
-        return {"assert_type": assert_type, "score": 1.0 if passed else 0.0, "passed": passed, "reason": "expected_text_contained"}
+        passed = (
+            normalized_expected in normalized_answer
+            if normalized_expected
+            else bool(normalized_answer)
+        )
+        return {
+            "assert_type": assert_type,
+            "score": 1.0 if passed else 0.0,
+            "passed": passed,
+            "reason": "expected_text_contained",
+        }
 
     if assert_type == "not_contains":
         passed = normalized_expected not in normalized_answer
-        return {"assert_type": assert_type, "score": 1.0 if passed else 0.0, "passed": passed, "reason": "expected_text_absent"}
+        return {
+            "assert_type": assert_type,
+            "score": 1.0 if passed else 0.0,
+            "passed": passed,
+            "reason": "expected_text_absent",
+        }
 
     if assert_type == "exact":
         passed = normalized_expected == normalized_answer
-        return {"assert_type": assert_type, "score": 1.0 if passed else 0.0, "passed": passed, "reason": "exact_match"}
+        return {
+            "assert_type": assert_type,
+            "score": 1.0 if passed else 0.0,
+            "passed": passed,
+            "reason": "exact_match",
+        }
 
     if assert_type == "citation_required":
         passed = bool(citations)
-        return {"assert_type": assert_type, "score": 1.0 if passed else 0.0, "passed": passed, "reason": "citation_present"}
+        return {
+            "assert_type": assert_type,
+            "score": 1.0 if passed else 0.0,
+            "passed": passed,
+            "reason": "citation_present",
+        }
 
     if assert_type == "tool_success":
-        passed = bool(tool_results) and all(item.status == "ok" for item in tool_results)
-        return {"assert_type": assert_type, "score": 1.0 if passed else 0.0, "passed": passed, "reason": "tool_calls_ok"}
+        passed = bool(tool_results) and all(
+            item.status == "ok" for item in tool_results
+        )
+        return {
+            "assert_type": assert_type,
+            "score": 1.0 if passed else 0.0,
+            "passed": passed,
+            "reason": "tool_calls_ok",
+        }
 
     if assert_type == "latency_ms":
         latency = usage.get("latency_ms") or usage.get("total_latency_ms") or 0
         limit = threshold or 10000
         passed = latency <= limit
         score = max(0.0, min(1.0, 1 - (latency / limit))) if limit else 0.0
-        return {"assert_type": assert_type, "score": round(score, 4), "passed": passed, "reason": "latency_within_threshold", "latency_ms": latency}
+        return {
+            "assert_type": assert_type,
+            "score": round(score, 4),
+            "passed": passed,
+            "reason": "latency_within_threshold",
+            "latency_ms": latency,
+        }
 
-    return {"assert_type": assert_type, "score": 0.0, "passed": False, "reason": "unsupported_assert_type"}
+    if assert_type == "semantic":
+        similarity = semantic_score or 0.0
+        limit = threshold if threshold is not None else 0.8
+        passed = similarity >= limit
+        reason = (
+            "semantic_embedding_failed"
+            if semantic_embedding_failed
+            else "semantic_similarity"
+        )
+        return {
+            "assert_type": assert_type,
+            "score": round(similarity, 4),
+            "passed": passed,
+            "reason": reason,
+            "similarity": similarity,
+            "threshold": limit,
+        }
+
+    return {
+        "assert_type": assert_type,
+        "score": 0.0,
+        "passed": False,
+        "reason": "unsupported_assert_type",
+    }
 
 
 def eval_run_out(run: EvalRun) -> EvalRunOut:
