@@ -23,8 +23,49 @@ class PublishedAppOut(BaseModel):
     publish_type: str
     config: dict[str, Any]
     created_by: UUID | None
+    active_version_id: UUID | None = None
+    active_version_no: int | None = None
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PublishPrecheckOut(BaseModel):
+    status: str
+    checks: list[dict[str, Any]]
+    confirmation: dict[str, Any] | None = None
+
+
+class PublishedAppVersionCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    title: str | None = None
+    release_note: str | None = None
+    activate: bool = True
+    force: bool = False
+
+
+class PublishedAppRollbackIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    version_id: UUID
+
+
+class PublishedAppVersionOut(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    app_id: UUID
+    agent_id: UUID
+    version_no: int
+    status: str
+    title: str | None
+    release_note: str | None
+    snapshot: dict[str, Any]
+    precheck_result: dict[str, Any]
+    created_by: UUID | None
+    created_at: datetime
+    activated_at: datetime | None
 
     model_config = {"from_attributes": True}
 

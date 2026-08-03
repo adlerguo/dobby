@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models import Agent, AppApiKey, PublishedApp
+from app.models import Agent, AppApiKey, PublishedApp, PublishedAppVersion
 from app.services.publish_service import hash_api_key
 
 api_key_bearer = HTTPBearer(auto_error=False)
@@ -22,6 +22,8 @@ class AppApiKeyContext:
     key_id: UUID
     user_id: UUID
     config: dict
+    active_version_id: UUID | None = None
+    runtime_snapshot: dict | None = None
 
 
 async def get_app_api_key_context(
@@ -48,11 +50,30 @@ async def get_app_api_key_context(
             status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable"
         )
 
-    agent = await db.get(Agent, app.agent_id)
-    if agent is None or agent.tenant_id != app.tenant_id or agent.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable"
-        )
+    runtime_snapshot = None
+    active_version_id = app.active_version_id
+    if active_version_id is not None:
+        version = await db.get(PublishedAppVersion, active_version_id)
+        if (
+            version is None
+            or version.tenant_id != app.tenant_id
+            or version.app_id != app.id
+            or version.status != "active"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable"
+            )
+        runtime_snapshot = version.snapshot or {}
+    else:
+        agent = await db.get(Agent, app.agent_id)
+        if (
+            agent is None
+            or agent.tenant_id != app.tenant_id
+            or agent.status != "active"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="app_unavailable"
+            )
 
     user_id = key.created_by or app.created_by
     if user_id is None:
@@ -67,6 +88,8 @@ async def get_app_api_key_context(
         key_id=key.id,
         user_id=user_id,
         config=key.config or {},
+        active_version_id=active_version_id,
+        runtime_snapshot=runtime_snapshot,
     )
 
 

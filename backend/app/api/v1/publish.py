@@ -12,14 +12,23 @@ from app.schemas.publish import (
     AppApiKeyStatusIn,
     PublishedAppCreate,
     PublishedAppOut,
+    PublishedAppRollbackIn,
+    PublishedAppVersionCreate,
+    PublishedAppVersionOut,
+    PublishPrecheckOut,
 )
 from app.services.audit_service import write_audit
 from app.services.publish_service import (
+    activate_published_app_version,
     create_app_api_key,
     create_published_app,
+    create_published_app_version,
     get_published_app,
     list_app_api_keys,
     list_published_apps,
+    list_published_app_versions,
+    published_app_out_data,
+    run_publish_precheck,
     set_app_api_key_status,
     unpublish_app,
 )
@@ -31,6 +40,8 @@ def publish_error(exc: ValueError) -> HTTPException:
     detail = str(exc)
     if detail.endswith("_not_found"):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+    if detail == "publish_precheck_blocked":
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     if detail in {"agent_not_publishable", "published_app_not_active"}:
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
@@ -64,7 +75,7 @@ async def create_published_app_api(
         detail={"agent_id": str(app.agent_id), "publish_type": app.publish_type},
         request=request,
     )
-    return app
+    return PublishedAppOut.model_validate(await published_app_out_data(db, app))
 
 
 @router.get("", response_model=list[PublishedAppOut], summary="List published apps")
@@ -72,7 +83,11 @@ async def list_published_apps_api(
     auth: AuthContext = Depends(get_current_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[PublishedAppOut]:
-    return await list_published_apps(db, tenant_id=auth.tenant_id)
+    apps = await list_published_apps(db, tenant_id=auth.tenant_id)
+    return [
+        PublishedAppOut.model_validate(await published_app_out_data(db, app))
+        for app in apps
+    ]
 
 
 @router.get("/{app_id}", response_model=PublishedAppOut, summary="Get published app")
@@ -86,7 +101,7 @@ async def get_published_app_api(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found"
         )
-    return app
+    return PublishedAppOut.model_validate(await published_app_out_data(db, app))
 
 
 @router.post(
@@ -112,7 +127,158 @@ async def unpublish_app_api(
         resource_id=app.id,
         request=request,
     )
-    return app
+    return PublishedAppOut.model_validate(await published_app_out_data(db, app))
+
+
+@router.post(
+    "/{app_id}/precheck",
+    response_model=PublishPrecheckOut,
+    summary="Run publish precheck",
+)
+async def run_publish_precheck_api(
+    app_id: UUID,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> PublishPrecheckOut:
+    app = await get_published_app(db, tenant_id=auth.tenant_id, app_id=app_id)
+    if app is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found"
+        )
+    return await run_publish_precheck(
+        db, tenant_id=auth.tenant_id, agent_id=app.agent_id
+    )
+
+
+@router.post(
+    "/{app_id}/versions",
+    response_model=PublishedAppVersionOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create published app version",
+)
+async def create_published_app_version_api(
+    app_id: UUID,
+    payload: PublishedAppVersionCreate,
+    request: Request,
+    auth: AuthContext = Depends(require_perm("agent:publish")),
+    db: AsyncSession = Depends(get_db),
+) -> PublishedAppVersionOut:
+    try:
+        version = await create_published_app_version(
+            db,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            app_id=app_id,
+            payload=payload,
+        )
+    except ValueError as exc:
+        raise publish_error(exc) from exc
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found"
+        )
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="published_app.version.create",
+        resource_type="published_app",
+        resource_id=app_id,
+        detail={
+            "version_id": str(version.id),
+            "version_no": version.version_no,
+            "status": version.status,
+            "precheck_status": (version.precheck_result or {}).get("status"),
+        },
+        request=request,
+    )
+    return version
+
+
+@router.get(
+    "/{app_id}/versions",
+    response_model=list[PublishedAppVersionOut],
+    summary="List published app versions",
+)
+async def list_published_app_versions_api(
+    app_id: UUID,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[PublishedAppVersionOut]:
+    versions = await list_published_app_versions(
+        db, tenant_id=auth.tenant_id, app_id=app_id
+    )
+    if versions is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="published_app_not_found"
+        )
+    return versions
+
+
+@router.post(
+    "/{app_id}/versions/{version_id}/activate",
+    response_model=PublishedAppVersionOut,
+    summary="Activate published app version",
+)
+async def activate_published_app_version_api(
+    app_id: UUID,
+    version_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_perm("agent:publish")),
+    db: AsyncSession = Depends(get_db),
+) -> PublishedAppVersionOut:
+    version = await activate_published_app_version(
+        db, tenant_id=auth.tenant_id, app_id=app_id, version_id=version_id
+    )
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="published_app_version_not_found",
+        )
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="published_app.version.activate",
+        resource_type="published_app",
+        resource_id=app_id,
+        detail={"version_id": str(version.id), "version_no": version.version_no},
+        request=request,
+    )
+    return version
+
+
+@router.post(
+    "/{app_id}/rollback",
+    response_model=PublishedAppVersionOut,
+    summary="Rollback published app version",
+)
+async def rollback_published_app_version_api(
+    app_id: UUID,
+    payload: PublishedAppRollbackIn,
+    request: Request,
+    auth: AuthContext = Depends(require_perm("agent:publish")),
+    db: AsyncSession = Depends(get_db),
+) -> PublishedAppVersionOut:
+    version = await activate_published_app_version(
+        db, tenant_id=auth.tenant_id, app_id=app_id, version_id=payload.version_id
+    )
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="published_app_version_not_found",
+        )
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="published_app.version.rollback",
+        resource_type="published_app",
+        resource_id=app_id,
+        detail={"version_id": str(version.id), "version_no": version.version_no},
+        request=request,
+    )
+    return version
 
 
 @router.post(

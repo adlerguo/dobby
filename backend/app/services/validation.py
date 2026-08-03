@@ -11,6 +11,8 @@ CONSTRAINT_DETAIL_MAP = {
     "uq_tools_tenant_active_name_ci": "tool_name_exists",
     "uq_workspaces_tenant_name_ci": "workspace_name_exists",
     "uq_documents_tenant_kb_name_ci": "document_name_exists",
+    "uq_documents_tenant_kb_logical_version": "document_version_exists",
+    "uq_documents_tenant_kb_logical_active": "document_active_version_exists",
     "uq_users_tenant_username_ci": "username_exists",
 }
 
@@ -58,6 +60,8 @@ async def ensure_document_name_available(
         Document.kb_id == kb_id,
         func.lower(func.btrim(Document.name)) == normalize_unique_text(name),
     )
+    if hasattr(Document, "version_status"):
+        stmt = stmt.where(Document.version_status == "active")
     if exclude_id is not None:
         stmt = stmt.where(Document.id != exclude_id)
 

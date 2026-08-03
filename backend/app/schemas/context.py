@@ -47,3 +47,11 @@ class ContextBuildOut(BaseModel):
     citations: list[CitationOut]
     token_budget: dict[str, int]
     truncation: dict[str, Any]
+    intent: dict[str, Any] | None = None
+    compression_strategy: str | None = None
+    compression_applied: bool = False
+    original_history_tokens: int | None = None
+    compressed_history_tokens: int | None = None
+    compressed_message_count: int = 0
+    compression_fallback: bool = False
+    compression_summary: str | None = None

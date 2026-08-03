@@ -20,7 +20,7 @@ export class ApiClientError extends Error {
   }
 }
 
-function getToken() {
+export function getAccessToken() {
   return localStorage.getItem('access_token') || ''
 }
 
@@ -76,7 +76,7 @@ export async function apiFetch<T>(path: string, options: ApiRequestInit = {}): P
     headers.set('Content-Type', 'application/json')
   }
 
-  const token = getToken()
+  const token = getAccessToken()
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }

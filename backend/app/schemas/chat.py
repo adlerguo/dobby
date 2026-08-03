@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ class ChatIn(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
     score_threshold: float | None = Field(default=None, ge=0, le=1)
     match_type: str | None = Field(default=None, pattern=r"^(hybrid|vector|keyword)$")
+    rerank_mode: Literal["off", "rule", "model"] | None = None
     max_tool_rounds: int = Field(default=1, ge=0, le=3)
     tool_calls: list[RuntimeToolCallIn] = Field(default_factory=list)
 

@@ -88,9 +88,11 @@ def test_retrieve_chunks_rerank_hook_is_pass_through(
     async def fake_text_search(db, tenant_id, kb_id, query, limit, embedding_dim):
         return text_candidates
 
-    async def tracking_rerank_candidates(*, query, candidates, top_k):
+    async def tracking_rerank_candidates(*, query, candidates, top_k, config=None):
         calls.append((query, len(candidates), top_k))
-        return await original_rerank(query=query, candidates=candidates, top_k=top_k)
+        return await original_rerank(
+            query=query, candidates=candidates, top_k=top_k, config=config
+        )
 
     original_rerank = retrieve.rerank_candidates
     monkeypatch.setattr(retrieve, "embed_texts", fake_embed_texts)
@@ -106,6 +108,7 @@ def test_retrieve_chunks_rerank_hook_is_pass_through(
             query="alpha",
             top_k=top_k,
             match_type="hybrid",
+            rerank_mode="off",
         )
     )
 
@@ -119,6 +122,8 @@ def test_retrieve_chunks_rerank_hook_is_pass_through(
     assert [chunk.score for chunk in result.chunks] == [
         retrieve.hybrid_score(candidate) for candidate in expected
     ]
+    assert all(chunk.rerank_score is None for chunk in result.chunks)
+    assert result.rerank_mode == "off"
     assert calls == [
         (
             "alpha",

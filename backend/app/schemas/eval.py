@@ -95,3 +95,41 @@ class ExperienceOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SecurityEvalRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    case_groups: list[str] = Field(default_factory=list)
+    max_cases: int = Field(default=30, ge=1, le=100)
+    workspace_id: UUID | None = None
+
+
+class SecurityEvalTemplateOut(BaseModel):
+    id: str
+    group: str
+    title: str
+    input: str
+    expected_behavior: str
+
+
+class SecurityEvalFailedCaseOut(BaseModel):
+    id: str
+    group: str
+    title: str
+    input: str
+    answer: str
+    reason: str
+    suggestion: str
+    trace_id: UUID | None = None
+
+
+class SecurityEvalReportOut(BaseModel):
+    agent_id: UUID
+    total: int
+    passed: int
+    failed: int
+    pass_rate: float
+    risk_level: str
+    failed_cases: list[SecurityEvalFailedCaseOut]
+    suggestions: list[str]

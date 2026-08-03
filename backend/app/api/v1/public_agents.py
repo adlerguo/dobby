@@ -106,7 +106,9 @@ async def invoke_public_chat(
                 top_k=payload.top_k,
                 score_threshold=payload.score_threshold,
                 match_type=payload.match_type,
+                rerank_mode=payload.rerank_mode,
                 max_tool_rounds=0,
+                runtime_snapshot=auth.runtime_snapshot,
             ),
         )
     except ValueError as exc:
@@ -155,7 +157,9 @@ async def stream_public_chat_events(
                     top_k=payload.top_k,
                     score_threshold=payload.score_threshold,
                     match_type=payload.match_type,
+                    rerank_mode=payload.rerank_mode,
                     max_tool_rounds=0,
+                    runtime_snapshot=auth.runtime_snapshot,
                 ),
             ):
                 if event["event"] == "done":

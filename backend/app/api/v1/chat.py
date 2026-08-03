@@ -138,6 +138,7 @@ async def stream_chat_events(
                     top_k=payload.top_k,
                     score_threshold=payload.score_threshold,
                     match_type=payload.match_type,
+                    rerank_mode=payload.rerank_mode,
                     max_tool_rounds=payload.max_tool_rounds,
                     tool_calls=payload.tool_calls,
                 ),

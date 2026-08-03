@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -26,8 +26,12 @@ class AgentRunIn(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
     score_threshold: float | None = Field(default=None, ge=0, le=1)
     match_type: str | None = Field(default=None, pattern=r"^(hybrid|vector|keyword)$")
+    rerank_mode: Literal["off", "rule", "model"] | None = None
+    intent_mode: Literal["rule", "llm"] | None = None
+    skip_intent: bool = False
     max_tool_rounds: int = Field(default=1, ge=0, le=3)
     tool_calls: list[RuntimeToolCallIn] = Field(default_factory=list)
+    runtime_snapshot: dict[str, Any] | None = None
 
 
 class RuntimeToolCallOut(BaseModel):
@@ -48,3 +52,7 @@ class AgentRunOut(BaseModel):
     tool_results: list[RuntimeToolCallOut]
     usage: dict[str, Any]
     context: ContextBuildOut
+    intent: dict[str, Any] | None = None
+    fallback_applied: bool = False
+    fallback_reason: str | None = None
+    fallback_message: str | None = None

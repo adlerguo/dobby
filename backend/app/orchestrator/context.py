@@ -1,5 +1,7 @@
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -7,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Agent, Conversation, Message, Tool
 from app.orchestrator.answer_style import ANSWER_STYLE_PROMPT
+from app.orchestrator.context_compression import compress_history_if_needed
 from app.rag.retrieve import retrieve_chunks
 from app.repositories import AgentRepository
 from app.schemas import (
@@ -41,26 +44,36 @@ async def build_agent_context(
     top_k: int | None = None,
     score_threshold: float | None = None,
     match_type: str | None = None,
+    rerank_mode: str | None = None,
+    intent: dict | None = None,
+    runtime_snapshot: dict[str, Any] | None = None,
 ) -> ContextBuildOut | None:
     repo = AgentRepository(db, tenant_id)
     agent = await repo.get_by_id(agent_id)
-    if agent is None or agent.status == "archived":
+    if agent is None:
+        return None
+    if runtime_snapshot:
+        agent = agent_from_context_snapshot(agent, runtime_snapshot)
+    elif agent.status == "archived":
         return None
 
     workspace_resources = await get_workspace_resource_ids(
         db, tenant_id=tenant_id, workspace_id=workspace_id
     )
-    kb_ids = unique_ids(
-        [*(await repo.get_kb_ids(agent.id)), *workspace_resources["kb"]]
-    )
-    tool_ids = unique_ids(
-        [*(await repo.get_tool_ids(agent.id)), *workspace_resources["tool"]]
-    )
+    if runtime_snapshot:
+        base_kb_ids = ids_from_snapshot(runtime_snapshot, "kb_ids")
+        base_tool_ids = ids_from_snapshot(runtime_snapshot, "tool_ids")
+    else:
+        base_kb_ids = await repo.get_kb_ids(agent.id)
+        base_tool_ids = await repo.get_tool_ids(agent.id)
+    kb_ids = unique_ids([*base_kb_ids, *workspace_resources["kb"]])
+    tool_ids = unique_ids([*base_tool_ids, *workspace_resources["tool"]])
     rag_config = resolve_rag_config(
         agent,
         request_top_k=top_k,
         request_score_threshold=score_threshold,
         request_match_type=match_type,
+        request_rerank_mode=rerank_mode,
     )
     tools = await load_tools(db, tenant_id=tenant_id, tool_ids=tool_ids)
     history = await load_history(
@@ -70,6 +83,19 @@ async def build_agent_context(
         conversation_id=conversation_id,
         limit=history_limit,
     )
+    history_messages = [
+        ContextMessageOut(
+            role=message.role,
+            content=message.content or "",
+            tokens=estimate_tokens(message.content or ""),
+        )
+        for message in history
+    ]
+    compression = await compress_history_if_needed(
+        history_messages,
+        agent.config or {},
+        token_estimator=estimate_tokens,
+    )
     retrieved_chunks, citations = await retrieve_agent_knowledge(
         db,
         tenant_id=tenant_id,
@@ -78,6 +104,12 @@ async def build_agent_context(
         top_k=rag_config["top_k"],
         score_threshold=rag_config["score_threshold"],
         match_type=str(rag_config["match_type"]),
+        rerank_mode=str(rag_config["rerank_mode"])
+        if rag_config.get("rerank_mode")
+        else None,
+        agent_rerank_config=rag_config.get("rerank_config")
+        if isinstance(rag_config.get("rerank_config"), dict)
+        else None,
     )
 
     parts = assemble_context_parts(
@@ -85,7 +117,7 @@ async def build_agent_context(
         query=query,
         conversation_id=conversation_id,
         tools=tools,
-        history=history,
+        history=compression.messages,
         chunks=retrieved_chunks,
         citations=citations,
         max_tokens=max_tokens,
@@ -101,6 +133,14 @@ async def build_agent_context(
         citations=parts.citations,
         token_budget=parts.token_budget,
         truncation=parts.truncation,
+        intent=intent,
+        compression_strategy=compression.strategy,
+        compression_applied=compression.applied,
+        original_history_tokens=compression.original_tokens,
+        compressed_history_tokens=compression.compressed_tokens,
+        compressed_message_count=compression.compressed_message_count,
+        compression_fallback=compression.fallback,
+        compression_summary=compression.summary,
     )
 
 
@@ -159,6 +199,8 @@ async def retrieve_agent_knowledge(
     top_k: int,
     score_threshold: float = 0.0,
     match_type: str = "hybrid",
+    rerank_mode: str | None = None,
+    agent_rerank_config: dict | None = None,
 ) -> tuple[list[RetrievedChunkOut], list[CitationOut]]:
     chunks: list[RetrievedChunkOut] = []
     citations: list[CitationOut] = []
@@ -173,6 +215,8 @@ async def retrieve_agent_knowledge(
             if match_type in {"hybrid", "vector", "keyword"}
             else "hybrid",
             score_threshold=score_threshold,
+            rerank_mode=rerank_mode if rerank_mode in {"off", "rule", "model"} else None,
+            agent_rerank_config=agent_rerank_config,
         )
         if result is None:
             continue
@@ -181,7 +225,9 @@ async def retrieve_agent_knowledge(
 
     ranked = sorted(
         zip(chunks, citations, strict=False),
-        key=lambda pair: pair[0].score,
+        key=lambda pair: pair[0].rerank_score
+        if pair[0].rerank_score is not None
+        else pair[0].score,
         reverse=True,
     )
     deduped: list[tuple[RetrievedChunkOut, CitationOut]] = []
@@ -203,7 +249,8 @@ def resolve_rag_config(
     request_top_k: int | None,
     request_score_threshold: float | None,
     request_match_type: str | None,
-) -> dict[str, int | float | str]:
+    request_rerank_mode: str | None,
+) -> dict:
     config = agent.config or {}
     rag = config.get("rag") if isinstance(config.get("rag"), dict) else {}
     top_k = coerce_int(
@@ -225,10 +272,16 @@ def resolve_rag_config(
     )
     if match_type not in {"hybrid", "vector", "keyword"}:
         match_type = "hybrid"
+    rerank_config = rag.get("rerank") if isinstance(rag.get("rerank"), dict) else {}
+    rerank_mode = request_rerank_mode or rerank_config.get("mode")
+    if rerank_mode not in {"off", "rule", "model"}:
+        rerank_mode = None
     return {
         "top_k": top_k,
         "score_threshold": score_threshold,
         "match_type": match_type,
+        "rerank_mode": rerank_mode,
+        "rerank_config": rerank_config,
     }
 
 
@@ -256,7 +309,7 @@ def assemble_context_parts(
     query: str,
     conversation_id: UUID | None,
     tools: list[Tool],
-    history: list[Message],
+    history: list[ContextMessageOut],
     chunks: list[RetrievedChunkOut],
     citations: list[CitationOut],
     max_tokens: int,
@@ -350,14 +403,14 @@ def make_system_message(agent: Agent, tools: list[Tool]) -> ContextMessageOut:
 
 
 def fit_history(
-    history: list[Message], budget: int
+    history: list[ContextMessageOut], budget: int
 ) -> tuple[list[ContextMessageOut], int]:
     selected: list[ContextMessageOut] = []
     used = 0
     dropped = 0
     for message in reversed(history):
         content = message.content or ""
-        tokens = estimate_tokens(content)
+        tokens = message.tokens or estimate_tokens(content)
         if tokens + used <= budget:
             selected.append(
                 ContextMessageOut(role=message.role, content=content, tokens=tokens)
@@ -387,7 +440,9 @@ def fit_knowledge(
         zip(chunks, citations, strict=False), start=1
     ):
         seq = f"#{citation.seq}" if citation.seq is not None else "-"
-        prefix = f"[{index}] doc={citation.doc_name} chunk={seq} chunk_id={chunk.id} score={chunk.score}\n"
+        location = citation_location_label(citation)
+        location_part = f" location={location}" if location else ""
+        prefix = f"[{index}] doc={citation.doc_name} chunk={seq}{location_part} chunk_id={chunk.id} score={chunk.score}\n"
         available = budget - used - estimate_tokens(prefix)
         if available <= 0:
             truncated = True
@@ -424,6 +479,25 @@ def tool_out(tool: Tool) -> ContextToolOut:
     )
 
 
+def citation_location_label(citation: CitationOut) -> str:
+    if citation.page_start is not None:
+        if citation.page_end is not None and citation.page_end != citation.page_start:
+            return f"page {citation.page_start}-{citation.page_end}"
+        return f"page {citation.page_start}"
+    if citation.paragraph_start is not None:
+        if (
+            citation.paragraph_end is not None
+            and citation.paragraph_end != citation.paragraph_start
+        ):
+            return f"paragraph {citation.paragraph_start}-{citation.paragraph_end}"
+        return f"paragraph {citation.paragraph_start}"
+    if citation.block_start is not None:
+        if citation.block_end is not None and citation.block_end != citation.block_start:
+            return f"block {citation.block_start}-{citation.block_end}"
+        return f"block {citation.block_start}"
+    return ""
+
+
 def unique_ids(ids: list[UUID]) -> list[UUID]:
     seen: set[UUID] = set()
     unique: list[UUID] = []
@@ -432,6 +506,47 @@ def unique_ids(ids: list[UUID]) -> list[UUID]:
             seen.add(item)
             unique.append(item)
     return unique
+
+
+def ids_from_snapshot(snapshot: dict[str, Any], field: str) -> list[UUID]:
+    values = snapshot.get(field)
+    if not isinstance(values, list):
+        return []
+    ids: list[UUID] = []
+    for value in values:
+        parsed = parse_uuid(value)
+        if parsed is not None:
+            ids.append(parsed)
+    return ids
+
+
+def agent_from_context_snapshot(agent: Agent, snapshot: dict[str, Any]):
+    snapshot_agent = snapshot.get("agent")
+    if not isinstance(snapshot_agent, dict):
+        return agent
+    return SimpleNamespace(
+        id=agent.id,
+        tenant_id=agent.tenant_id,
+        status="active",
+        name=snapshot_agent.get("name") or agent.name,
+        type=snapshot_agent.get("type") or agent.type,
+        persona=snapshot_agent.get("persona"),
+        config=snapshot_agent.get("config")
+        if isinstance(snapshot_agent.get("config"), dict)
+        else {},
+        model_id=parse_uuid(snapshot_agent.get("model_id")) or agent.model_id,
+    )
+
+
+def parse_uuid(value: Any) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
 
 
 def estimate_tokens(text: str) -> int:

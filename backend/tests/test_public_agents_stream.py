@@ -221,9 +221,21 @@ def test_public_app_chat_stream_forwards_frames_and_records_usage_once(
     events = parse_sse_events(response.text)
     event_names = [event for event, _data in events]
     assert event_names == ["citation", "delta", "delta", "done"]
-    assert events[0][1] == {
-        "chunk_id": events[0][1]["chunk_id"],
-        "doc_id": events[0][1]["doc_id"],
+    citation = events[0][1]
+    assert {
+        "chunk_id": citation["chunk_id"],
+        "doc_id": citation["doc_id"],
+        "doc_name": citation["doc_name"],
+        "seq": citation["seq"],
+        "content_length": citation["content_length"],
+        "score": citation["score"],
+        "vector_score": citation["vector_score"],
+        "text_score": citation["text_score"],
+        "match_channels": citation["match_channels"],
+        "snippet": citation["snippet"],
+    } == {
+        "chunk_id": citation["chunk_id"],
+        "doc_id": citation["doc_id"],
         "doc_name": "doc-1",
         "seq": 1,
         "content_length": 5,
@@ -233,6 +245,8 @@ def test_public_app_chat_stream_forwards_frames_and_records_usage_once(
         "match_channels": ["vector"],
         "snippet": "hello",
     }
+    assert "source_name" in citation
+    assert "page_start" in citation
     assert events[1] == ("delta", {"text": "hello"})
     assert events[2] == ("delta", {"text": " world"})
     assert events[3][1]["conversation_id"] == str(expected_conversation_id)

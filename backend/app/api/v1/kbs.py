@@ -5,6 +5,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     Query,
     Request,
     UploadFile,
@@ -24,12 +25,19 @@ from app.core.errors import (
 )
 from app.models import Document, KnowledgeBase
 from app.rag.chunk_store import chunk_model_for_dim
-from app.rag.retrieve import retrieve_chunks
+from app.rag.retrieve import location_fields, retrieve_chunks
 from app.rag.tasks import enqueue_parse_document, enqueue_reindex_document
 from app.repositories import DocumentRepository, KnowledgeBaseRepository
 from app.schemas import (
+    DocumentBatchCreateOut,
+    DocumentBatchItemOut,
+    DocumentBatchStatusItemOut,
+    DocumentBatchStatusOut,
     DocumentChunkOut,
+    DocumentMetaUpdate,
     DocumentOut,
+    DocumentVersionCreateOut,
+    DocumentVersionOut,
     KnowledgeBaseCreate,
     KnowledgeBaseHealthOut,
     KnowledgeBaseOut,
@@ -40,10 +48,14 @@ from app.schemas import (
 )
 from app.services import (
     archive_kb,
+    activate_document_version,
     create_kb,
     delete_document,
+    list_document_versions,
     update_kb,
     upload_document,
+    upload_document_version,
+    upload_documents_batch,
 )
 from app.services.audit_service import write_audit
 
@@ -238,6 +250,110 @@ async def upload_kb_document(
     return document
 
 
+@router.post(
+    "/kbs/{kb_id}/documents/batch",
+    response_model=DocumentBatchCreateOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload documents in batch",
+)
+async def upload_kb_documents_batch(
+    kb_id: UUID,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    files: list[UploadFile] = File(...),
+    auth: AuthContext = Depends(require_perm("kb:create")),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentBatchCreateOut:
+    if not files:
+        raise ValidationError(code="empty_file_batch")
+
+    result = await upload_documents_batch(
+        db,
+        tenant_id=auth.tenant_id,
+        kb_id=kb_id,
+        files=files,
+    )
+    if result is None:
+        raise NotFoundError(code="not_found", message="kb_not_found")
+
+    batch, created_documents = result
+    for document in created_documents:
+        background_tasks.add_task(enqueue_parse_document, document.id)
+
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="document.batch_upload",
+        resource_type="kb",
+        resource_id=kb_id,
+        detail={
+            "batch_id": str(batch.batch_id),
+            "total": batch.total,
+            "created": batch.created,
+            "failed": batch.failed,
+        },
+        request=request,
+    )
+    return batch
+
+
+@router.get(
+    "/kbs/{kb_id}/document-batches/{batch_id}",
+    response_model=DocumentBatchStatusOut,
+    summary="Get document batch status",
+)
+async def get_document_batch_status(
+    kb_id: UUID,
+    batch_id: UUID,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentBatchStatusOut:
+    kb_repo = KnowledgeBaseRepository(db, auth.tenant_id)
+    kb = await kb_repo.get_by_id(kb_id)
+    if kb is None or kb.status == "archived":
+        raise NotFoundError(code="not_found", message="kb_not_found")
+
+    result = await db.execute(
+        text(
+            """
+            SELECT id, name, parse_status, meta, created_at
+            FROM documents
+            WHERE tenant_id = :tenant_id
+                AND kb_id = :kb_id
+                AND meta ->> 'batch_id' = :batch_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {
+            "tenant_id": auth.tenant_id,
+            "kb_id": kb_id,
+            "batch_id": str(batch_id),
+        },
+    )
+    rows = result.mappings().all()
+    items = [
+        DocumentBatchStatusItemOut(
+            document_id=row["id"],
+            name=row["name"],
+            parse_status=row["parse_status"],
+            error_code=document_meta_error_code(row["meta"], row["parse_status"]),
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+    return DocumentBatchStatusOut(
+        batch_id=batch_id,
+        total=len(rows),
+        document_success=sum(1 for item in items if item.parse_status == "done"),
+        document_failed=sum(1 for item in items if item.parse_status == "failed"),
+        document_processing=sum(
+            1 for item in items if item.parse_status not in {"done", "failed"}
+        ),
+        items=items,
+    )
+
+
 @router.get(
     "/kbs/{kb_id}/documents", response_model=list[DocumentOut], summary="List documents"
 )
@@ -334,7 +450,162 @@ async def list_document_chunks(
         )
         .order_by(chunk_model.seq.asc().nulls_last(), chunk_model.created_at.asc())
     )
-    return [DocumentChunkOut(**dict(row)) for row in result.mappings().all()]
+    items: list[DocumentChunkOut] = []
+    for row in result.mappings().all():
+        data = dict(row)
+        data.update(location_fields(data.get("meta")))
+        items.append(DocumentChunkOut(**data))
+    return items
+
+
+@router.patch(
+    "/documents/{document_id}/meta",
+    response_model=DocumentOut,
+    summary="Update document metadata",
+)
+async def patch_document_meta(
+    document_id: UUID,
+    payload: DocumentMetaUpdate,
+    request: Request,
+    auth: AuthContext = Depends(require_perm("kb:create")),
+    db: AsyncSession = Depends(get_db),
+) -> Document:
+    repo = DocumentRepository(db, auth.tenant_id)
+    document = await repo.get_by_id(document_id)
+    if document is None:
+        raise NotFoundError(code="not_found", message="document_not_found")
+
+    source_patch = payload.source.model_dump(exclude_unset=True)
+    meta = dict(document.meta or {})
+    existing_source = default_document_source(document.name, meta.get("source"))
+    next_source = {**existing_source, **source_patch}
+    if not str(next_source.get("source_name") or "").strip():
+        raise ValidationError(code="source_name_required")
+    meta["source"] = next_source
+    document.meta = meta
+    await db.flush()
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="document.meta.update",
+        resource_type="document",
+        resource_id=document.id,
+        detail={"fields": sorted(source_patch.keys())},
+        request=request,
+    )
+    await db.refresh(document)
+    return document
+
+
+@router.post(
+    "/documents/{document_id}/versions",
+    response_model=DocumentVersionCreateOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a new document version",
+)
+async def upload_document_version_api(
+    document_id: UUID,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    file: UploadFile = File(...),
+    version_label: str | None = Form(default=None),
+    activate: bool = Form(default=False),
+    auth: AuthContext = Depends(require_perm("kb:create")),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentVersionCreateOut:
+    try:
+        result = await upload_document_version(
+            db,
+            tenant_id=auth.tenant_id,
+            document_id=document_id,
+            file=file,
+            version_label=version_label,
+            activate=activate,
+        )
+    except ValueError as exc:
+        raise kb_error(exc) from exc
+    if result is None:
+        raise NotFoundError(code="not_found", message="document_not_found")
+
+    background_tasks.add_task(enqueue_parse_document, result.document.id)
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="document.version.create",
+        resource_type="document",
+        resource_id=result.document.id,
+        detail={
+            "logical_doc_id": str(result.document.logical_doc_id),
+            "version_no": result.document.version_no,
+            "version_status": result.document.version_status,
+            "parent_document_id": str(document_id),
+            "activate": activate,
+        },
+        request=request,
+    )
+    return result
+
+
+@router.get(
+    "/documents/{document_id}/versions",
+    response_model=list[DocumentVersionOut],
+    summary="List document versions",
+)
+async def list_document_versions_api(
+    document_id: UUID,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[DocumentVersionOut]:
+    versions = await list_document_versions(
+        db, tenant_id=auth.tenant_id, document_id=document_id
+    )
+    if versions is None:
+        raise NotFoundError(code="not_found", message="document_not_found")
+    return list(versions)
+
+
+@router.post(
+    "/documents/{document_id}/versions/{version_id}/activate",
+    response_model=DocumentVersionCreateOut,
+    summary="Activate a document version",
+)
+async def activate_document_version_api(
+    document_id: UUID,
+    version_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_perm("kb:create")),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentVersionCreateOut:
+    try:
+        result = await activate_document_version(
+            db,
+            tenant_id=auth.tenant_id,
+            document_id=document_id,
+            version_id=version_id,
+        )
+    except ValueError as exc:
+        raise kb_error(exc) from exc
+    if result is None:
+        raise NotFoundError(code="not_found", message="document_not_found")
+    await write_audit(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        action="document.version.activate",
+        resource_type="document",
+        resource_id=version_id,
+        detail={
+            "logical_doc_id": str(result.document.logical_doc_id),
+            "version_no": result.document.version_no,
+            "previous_active_id": str(result.previous_active_id)
+            if result.previous_active_id
+            else None,
+        },
+        request=request,
+    )
+    return result
 
 
 @router.post(
@@ -355,6 +626,7 @@ async def retrieve_kb_chunks(
             top_k=payload.top_k,
             match_type=payload.match_type,
             score_threshold=payload.score_threshold,
+            rerank_mode=payload.rerank_mode,
         )
     except ValueError as exc:
         raise kb_error(exc) from exc
@@ -462,6 +734,44 @@ def build_kb_health_suggestions(stats: dict) -> list[str]:
     if not suggestions:
         suggestions.append("知识库数据状态正常，无需处理。")
     return suggestions
+
+
+def document_error_code(document: Document) -> str | None:
+    return document_meta_error_code(document.meta, document.parse_status)
+
+
+def document_meta_error_code(meta: dict | None, parse_status: str | None) -> str | None:
+    if parse_status != "failed":
+        return None
+    meta = meta or {}
+    ingest_task = meta.get("ingest_task")
+    if not isinstance(ingest_task, dict):
+        return None
+    error = ingest_task.get("error")
+    if not isinstance(error, dict):
+        return None
+    error_code = error.get("error_code")
+    return str(error_code) if error_code else None
+
+
+def default_document_source(name: str, source: object | None) -> dict:
+    defaults = {
+        "source_name": name,
+        "source_type": "upload",
+        "tags": [],
+        "version_label": "v1",
+        "published_at": None,
+    }
+    if isinstance(source, dict):
+        merged = {**defaults, **source}
+        if not merged.get("source_name"):
+            merged["source_name"] = name
+        if not merged.get("source_type"):
+            merged["source_type"] = "upload"
+        if not isinstance(merged.get("tags"), list):
+            merged["tags"] = []
+        return merged
+    return defaults
 
 
 @router.delete(

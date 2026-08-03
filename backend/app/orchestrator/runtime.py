@@ -2,6 +2,7 @@ import json
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -12,15 +13,27 @@ from app.core.config import settings
 from app.core.maas_auth import maas_service_headers
 from app.models import Agent, Conversation, Message, Model, RunTrace, Tool
 from app.orchestrator.context import build_agent_context, estimate_tokens
+from app.orchestrator.intent import classify_intent
+from app.orchestrator.runtime_fallback import (
+    FallbackResult,
+    fallback_config,
+    fallback_for_citations,
+    fallback_for_intent,
+    fallback_for_tool_failure,
+    make_fallback,
+    no_fallback,
+)
 from app.repositories import AgentRepository, ToolRepository
 from app.schemas import (
     AgentRunIn,
     AgentRunOut,
     ContextBuildOut,
+    ContextMessageOut,
     RuntimeToolCallIn,
     RuntimeToolCallOut,
 )
 from app.services import run_tool
+from app.services.incident_service import create_incident_safe, incident_from_runtime
 from app.services.workspace_service import get_workspace_resource_ids, load_workspace
 
 
@@ -63,7 +76,10 @@ async def run_agent(
 ) -> AgentRunOut | None:
     repo = AgentRepository(db, tenant_id)
     agent = await repo.get_by_id(agent_id)
-    if agent is None or agent.status != "active":
+    if agent is None:
+        return None
+    agent = agent_from_runtime_snapshot(agent, payload.runtime_snapshot)
+    if agent.status != "active":
         return None
 
     conversation = await ensure_conversation(
@@ -75,6 +91,28 @@ async def run_agent(
         workspace_id=payload.workspace_id,
         title=payload.query,
     )
+    intent = await classify_intent(
+        payload.query,
+        agent.config or {},
+        request_mode=payload.intent_mode,
+        skip_intent=payload.skip_intent,
+    )
+    fallback_options = fallback_config(agent.config or {})
+    intent_fallback = fallback_for_intent(intent, fallback_options)
+    if intent_fallback.applied:
+        context = empty_context(agent, conversation, payload.query, intent.as_dict())
+        return await persist_fallback_run(
+            db,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            agent=agent,
+            query=payload.query,
+            context=context,
+            fallback=intent_fallback,
+            trace_name="run_agent",
+            user_id=user_id,
+        )
+
     model = await load_llm_model(
         db, tenant_id=tenant_id, agent=agent, workspace_id=conversation.workspace_id
     )
@@ -90,9 +128,25 @@ async def run_agent(
         top_k=payload.top_k,
         score_threshold=payload.score_threshold,
         match_type=payload.match_type,
+        rerank_mode=payload.rerank_mode,
+        intent=intent.as_dict(),
+        runtime_snapshot=payload.runtime_snapshot,
     )
     if context is None:
         return None
+    citation_fallback = fallback_for_citations(len(context.citations), fallback_options)
+    if citation_fallback.applied:
+        return await persist_fallback_run(
+            db,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            agent=agent,
+            query=payload.query,
+            context=context,
+            fallback=citation_fallback,
+            trace_name="run_agent",
+            user_id=user_id,
+        )
 
     user_message = Message(
         tenant_id=tenant_id,
@@ -118,13 +172,16 @@ async def run_agent(
             if conversation.workspace_id
             else None,
             "model": model.name,
-            "context": {
+                "context": {
                 "token_budget": context.token_budget,
                 "truncation": context.truncation,
                 "tool_count": len(context.tools),
                 "citation_count": len(context.citations),
+                    "rerank": context_rerank_summary(context),
+                    "compression": context_compression_summary(context),
+                },
+                "intent": intent.as_dict(),
             },
-        },
         output={},
         tokens=0,
         latency_ms=0,
@@ -188,7 +245,8 @@ async def run_agent(
             if agent.type == "nl2data":
                 answer = format_nl2data_answer(tool_results)
         elif tool_failed:
-            answer = format_tool_failure_answer(tool_results)
+            tool_fallback = fallback_for_tool_failure(tool_results, fallback_options)
+            answer = tool_fallback.message or format_tool_failure_answer(tool_results)
 
         usage = final_response.get("usage") or {}
         assistant_message = Message(
@@ -202,6 +260,11 @@ async def run_agent(
             ],
         )
         db.add(assistant_message)
+        active_fallback = (
+            fallback_for_tool_failure(tool_results, fallback_options)
+            if tool_failed
+            else no_fallback()
+        )
         root_trace.status = "failed" if tool_failed else "ok"
         root_trace.output = {
             "answer": answer,
@@ -210,6 +273,9 @@ async def run_agent(
             "citations": [
                 citation.model_dump(mode="json") for citation in context.citations
             ],
+            "intent": intent.as_dict(),
+            "compression": context_compression_summary(context),
+            "fallback": active_fallback.as_dict(),
         }
         root_trace.tokens = int(
             (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
@@ -220,6 +286,21 @@ async def run_agent(
         await db.refresh(user_message)
         await db.refresh(assistant_message)
         await db.refresh(root_trace)
+        await archive_runtime_incidents(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation=conversation,
+            agent=agent,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            trace_id=root_trace.id,
+            query=payload.query,
+            answer=answer,
+            fallback=active_fallback,
+            tool_results=tool_results,
+            citations=context.citations,
+        )
 
         return AgentRunOut(
             conversation_id=conversation.id,
@@ -231,8 +312,72 @@ async def run_agent(
             tool_results=tool_results,
             usage=usage,
             context=context,
+            intent=intent.as_dict(),
+            fallback_applied=active_fallback.applied,
+            fallback_reason=active_fallback.reason,
+            fallback_message=active_fallback.message,
         )
     except Exception as exc:
+        fallback = make_fallback(
+            "model_error",
+            fallback_options,
+            detail={"error": str(exc) or exc.__class__.__name__},
+        )
+        if fallback.applied:
+            await commit_fallback_root_trace(
+                db,
+                root_trace=root_trace,
+                started=started,
+                context=context,
+                intent=intent.as_dict(),
+                fallback=fallback,
+                usage={},
+                tool_results=[],
+            )
+            assistant_message = Message(
+                tenant_id=tenant_id,
+                conversation_id=conversation.id,
+                role="assistant",
+                content=fallback.message or "",
+                tokens=estimate_tokens(fallback.message or ""),
+                citations=[],
+            )
+            db.add(assistant_message)
+            await db.flush()
+            await db.commit()
+            await db.refresh(user_message)
+            await db.refresh(assistant_message)
+            await db.refresh(root_trace)
+            await archive_runtime_incidents(
+                db,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                conversation=conversation,
+                agent=agent,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                trace_id=root_trace.id,
+                query=payload.query,
+                answer=fallback.message or "",
+                fallback=fallback,
+                tool_results=[],
+                citations=[],
+            )
+            return AgentRunOut(
+                conversation_id=conversation.id,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                trace_id=root_trace.id,
+                answer=fallback.message or "",
+                citations=[],
+                tool_results=[],
+                usage={},
+                context=context,
+                intent=intent.as_dict(),
+                fallback_applied=True,
+                fallback_reason=fallback.reason,
+                fallback_message=fallback.message,
+            )
         error = runtime_error(exc)
         await commit_failed_root_trace(
             db, root_trace=root_trace, started=started, error=error
@@ -250,7 +395,14 @@ async def stream_agent_events(
 ) -> AsyncGenerator[dict[str, Any], None]:
     repo = AgentRepository(db, tenant_id)
     agent = await repo.get_by_id(agent_id)
-    if agent is None or agent.status != "active":
+    if agent is None:
+        yield {
+            "event": "error",
+            "data": OrchestratorError("agent_not_found").event_data(),
+        }
+        return
+    agent = agent_from_runtime_snapshot(agent, payload.runtime_snapshot)
+    if agent.status != "active":
         yield {
             "event": "error",
             "data": OrchestratorError("agent_not_found").event_data(),
@@ -266,6 +418,32 @@ async def stream_agent_events(
         workspace_id=payload.workspace_id,
         title=payload.query,
     )
+    intent = await classify_intent(
+        payload.query,
+        agent.config or {},
+        request_mode=payload.intent_mode,
+        skip_intent=payload.skip_intent,
+    )
+    fallback_options = fallback_config(agent.config or {})
+    intent_fallback = fallback_for_intent(intent, fallback_options)
+    if intent_fallback.applied:
+        context = empty_context(agent, conversation, payload.query, intent.as_dict())
+        result = await persist_fallback_run(
+            db,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            agent=agent,
+            query=payload.query,
+            context=context,
+            fallback=intent_fallback,
+            trace_name="stream_agent",
+            user_id=user_id,
+        )
+        yield {"event": "fallback", "data": intent_fallback.as_dict()}
+        yield {"event": "delta", "data": {"text": result.answer}}
+        yield {"event": "done", "data": stream_done_payload(result)}
+        return
+
     model = await load_llm_model(
         db, tenant_id=tenant_id, agent=agent, workspace_id=conversation.workspace_id
     )
@@ -281,12 +459,32 @@ async def stream_agent_events(
         top_k=payload.top_k,
         score_threshold=payload.score_threshold,
         match_type=payload.match_type,
+        rerank_mode=payload.rerank_mode,
+        intent=intent.as_dict(),
+        runtime_snapshot=payload.runtime_snapshot,
     )
     if context is None:
         yield {
             "event": "error",
             "data": OrchestratorError("agent_not_found").event_data(),
         }
+        return
+    citation_fallback = fallback_for_citations(len(context.citations), fallback_options)
+    if citation_fallback.applied:
+        result = await persist_fallback_run(
+            db,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            agent=agent,
+            query=payload.query,
+            context=context,
+            fallback=citation_fallback,
+            trace_name="stream_agent",
+            user_id=user_id,
+        )
+        yield {"event": "fallback", "data": citation_fallback.as_dict()}
+        yield {"event": "delta", "data": {"text": result.answer}}
+        yield {"event": "done", "data": stream_done_payload(result)}
         return
 
     user_message = Message(
@@ -313,13 +511,16 @@ async def stream_agent_events(
             if conversation.workspace_id
             else None,
             "model": model.name,
-            "context": {
+                "context": {
                 "token_budget": context.token_budget,
                 "truncation": context.truncation,
                 "tool_count": len(context.tools),
                 "citation_count": len(context.citations),
+                    "rerank": context_rerank_summary(context),
+                    "compression": context_compression_summary(context),
+                },
+                "intent": intent.as_dict(),
             },
-        },
         output={},
         tokens=0,
         latency_ms=0,
@@ -360,20 +561,70 @@ async def stream_agent_events(
             elif event["type"] == "usage":
                 usage = event["usage"]
     except Exception as exc:
-        error = runtime_error(exc)
-        await commit_failed_root_trace(
-            db, root_trace=root_trace, started=started, error=error, usage=usage
+        fallback = make_fallback(
+            "model_error",
+            fallback_options,
+            detail={"error": str(exc) or exc.__class__.__name__},
         )
-        yield {"event": "error", "data": error.event_data()}
+        await commit_fallback_root_trace(
+            db,
+            root_trace=root_trace,
+            started=started,
+            context=context,
+            intent=intent.as_dict(),
+            fallback=fallback,
+            usage=usage,
+            tool_results=[],
+        )
+        assistant_message = Message(
+            tenant_id=tenant_id,
+            conversation_id=conversation.id,
+            role="assistant",
+            content=fallback.message or "",
+            tokens=estimate_tokens(fallback.message or ""),
+            citations=[],
+        )
+        db.add(assistant_message)
+        await db.flush()
+        await db.commit()
+        await db.refresh(assistant_message)
+        await db.refresh(root_trace)
+        await archive_runtime_incidents(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation=conversation,
+            agent=agent,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            trace_id=root_trace.id,
+            query=payload.query,
+            answer=fallback.message or "",
+            fallback=fallback,
+            tool_results=[],
+            citations=context.citations,
+        )
+        yield {"event": "fallback", "data": fallback.as_dict()}
+        yield {"event": "delta", "data": {"text": fallback.message or ""}}
         yield {
             "event": "done",
             "data": {
                 "conversation_id": str(conversation.id),
+                "user_message_id": str(user_message.id),
+                "assistant_message_id": str(assistant_message.id),
                 "trace_id": str(root_trace.id),
                 "usage": usage,
                 "tool_results": [],
                 "citation_count": len(context.citations),
-                "status": "failed",
+                "status": "fallback",
+                "intent": intent.as_dict(),
+                "compression_strategy": context.compression_strategy,
+                "compression_applied": context.compression_applied,
+                "original_history_tokens": context.original_history_tokens,
+                "compressed_history_tokens": context.compressed_history_tokens,
+                "compressed_message_count": context.compressed_message_count,
+                "compression_fallback": context.compression_fallback,
+                **fallback.as_dict(),
             },
         }
         return
@@ -447,10 +698,12 @@ async def stream_agent_events(
             usage = final_response.get("usage") or usage
             yield {"event": "delta", "data": {"text": "\n\n" + answer}}
         elif tool_failed:
-            tool_error_answer = format_tool_failure_answer(tool_results)
+            tool_fallback = fallback_for_tool_failure(tool_results, fallback_options)
+            tool_error_answer = tool_fallback.message or format_tool_failure_answer(tool_results)
             answer = (
                 answer + "\n\n" + tool_error_answer if answer else tool_error_answer
             )
+            yield {"event": "fallback", "data": tool_fallback.as_dict()}
             yield {"event": "delta", "data": {"text": "\n\n" + tool_error_answer}}
     except Exception as exc:
         error = runtime_error(exc)
@@ -486,6 +739,11 @@ async def stream_agent_events(
         citations=[citation.model_dump(mode="json") for citation in context.citations],
     )
     db.add(assistant_message)
+    active_fallback = (
+        fallback_for_tool_failure(tool_results, fallback_options)
+        if tool_failed
+        else no_fallback()
+    )
     root_trace.status = "failed" if tool_failed else "ok"
     root_trace.output = {
         "answer": answer,
@@ -494,6 +752,9 @@ async def stream_agent_events(
         "citations": [
             citation.model_dump(mode="json") for citation in context.citations
         ],
+        "intent": intent.as_dict(),
+        "compression": context_compression_summary(context),
+        "fallback": active_fallback.as_dict(),
     }
     root_trace.tokens = int(
         (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
@@ -504,6 +765,21 @@ async def stream_agent_events(
     await db.refresh(user_message)
     await db.refresh(assistant_message)
     await db.refresh(root_trace)
+    await archive_runtime_incidents(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation=conversation,
+        agent=agent,
+        user_message_id=user_message.id,
+        assistant_message_id=assistant_message.id,
+        trace_id=root_trace.id,
+        query=payload.query,
+        answer=answer,
+        fallback=active_fallback,
+        tool_results=tool_results,
+        citations=context.citations,
+    )
     yield {
         "event": "done",
         "data": {
@@ -514,8 +790,48 @@ async def stream_agent_events(
             "usage": usage,
             "tool_results": [tool.model_dump(mode="json") for tool in tool_results],
             "citation_count": len(context.citations),
+            "intent": intent.as_dict(),
+            "compression_strategy": context.compression_strategy,
+            "compression_applied": context.compression_applied,
+            "original_history_tokens": context.original_history_tokens,
+            "compressed_history_tokens": context.compressed_history_tokens,
+            "compressed_message_count": context.compressed_message_count,
+            "compression_fallback": context.compression_fallback,
+            **active_fallback.as_dict(),
         },
     }
+
+
+def agent_from_runtime_snapshot(agent: Agent, snapshot: dict[str, Any] | None):
+    if not snapshot:
+        return agent
+    snapshot_agent = snapshot.get("agent")
+    if not isinstance(snapshot_agent, dict):
+        return agent
+    model_id = parse_uuid(snapshot_agent.get("model_id")) or agent.model_id
+    return SimpleNamespace(
+        id=agent.id,
+        tenant_id=agent.tenant_id,
+        status="active",
+        name=snapshot_agent.get("name") or agent.name,
+        type=snapshot_agent.get("type") or agent.type,
+        persona=snapshot_agent.get("persona"),
+        config=snapshot_agent.get("config")
+        if isinstance(snapshot_agent.get("config"), dict)
+        else {},
+        model_id=model_id,
+    )
+
+
+def parse_uuid(value: Any) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
 
 
 async def load_llm_model(
@@ -540,6 +856,277 @@ async def load_llm_model(
     if model is None or model.type != "llm":
         raise ValueError("model_not_found")
     return model
+
+
+def empty_context(
+    agent: Agent, conversation: Conversation, query: str, intent: dict[str, Any]
+) -> ContextBuildOut:
+    user_message = ContextMessageOut(
+        role="user", content=query, tokens=estimate_tokens(query)
+    )
+    return ContextBuildOut(
+        agent_id=agent.id,
+        conversation_id=conversation.id,
+        workspace_id=conversation.workspace_id,
+        messages=[user_message],
+        tools=[],
+        retrieved_chunks=[],
+        citations=[],
+        token_budget={
+            "max": user_message.tokens,
+            "system": 0,
+            "knowledge": 0,
+            "history": 0,
+            "user": user_message.tokens,
+            "total": user_message.tokens,
+        },
+        truncation={"policy_blocked": True},
+        intent=intent,
+        compression_strategy="recent_only",
+        compression_applied=False,
+        original_history_tokens=0,
+        compressed_history_tokens=0,
+        compressed_message_count=0,
+        compression_fallback=False,
+    )
+
+
+async def persist_fallback_run(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    conversation: Conversation,
+    agent: Agent,
+    query: str,
+    context: ContextBuildOut,
+    fallback: FallbackResult,
+    trace_name: str,
+    user_id: UUID,
+) -> AgentRunOut:
+    started = time.perf_counter()
+    user_message = Message(
+        tenant_id=tenant_id,
+        conversation_id=conversation.id,
+        role="user",
+        content=query,
+        tokens=estimate_tokens(query),
+        citations=[],
+    )
+    assistant_message = Message(
+        tenant_id=tenant_id,
+        conversation_id=conversation.id,
+        role="assistant",
+        content=fallback.message or "",
+        tokens=estimate_tokens(fallback.message or ""),
+        citations=[],
+    )
+    root_trace = RunTrace(
+        tenant_id=tenant_id,
+        conversation_id=conversation.id,
+        agent_id=agent.id,
+        span_type="agent",
+        name=trace_name,
+        status="ok",
+        input={
+            "query": query,
+            "workspace_id": str(conversation.workspace_id)
+            if conversation.workspace_id
+            else None,
+            "intent": context.intent,
+            "context": {
+                "token_budget": context.token_budget,
+                "truncation": context.truncation,
+                "tool_count": len(context.tools),
+                "citation_count": len(context.citations),
+                "compression": context_compression_summary(context),
+            },
+        },
+        output={
+            "answer": fallback.message,
+            "usage": {},
+            "tool_results": [],
+            "citations": [],
+            "intent": context.intent,
+            "compression": context_compression_summary(context),
+            "fallback": fallback.as_dict(),
+        },
+        tokens=assistant_message.tokens,
+        latency_ms=int((time.perf_counter() - started) * 1000),
+    )
+    db.add(user_message)
+    db.add(assistant_message)
+    db.add(root_trace)
+    await db.flush()
+    await db.commit()
+    await db.refresh(user_message)
+    await db.refresh(assistant_message)
+    await db.refresh(root_trace)
+    await archive_runtime_incidents(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation=conversation,
+        agent=agent,
+        user_message_id=user_message.id,
+        assistant_message_id=assistant_message.id,
+        trace_id=root_trace.id,
+        query=query,
+        answer=fallback.message or "",
+        fallback=fallback,
+        tool_results=[],
+        citations=[],
+    )
+    return AgentRunOut(
+        conversation_id=conversation.id,
+        user_message_id=user_message.id,
+        assistant_message_id=assistant_message.id,
+        trace_id=root_trace.id,
+        answer=fallback.message or "",
+        citations=[],
+        tool_results=[],
+        usage={},
+        context=context,
+        intent=context.intent,
+        fallback_applied=True,
+        fallback_reason=fallback.reason,
+        fallback_message=fallback.message,
+    )
+
+
+async def commit_fallback_root_trace(
+    db: AsyncSession,
+    *,
+    root_trace: RunTrace,
+    started: float,
+    context: ContextBuildOut,
+    intent: dict[str, Any],
+    fallback: FallbackResult,
+    usage: dict[str, Any],
+    tool_results: list[RuntimeToolCallOut],
+) -> None:
+    root_trace.status = "failed" if fallback.reason == "model_error" else "ok"
+    root_trace.output = {
+        "answer": fallback.message,
+        "usage": usage,
+        "tool_results": [result.model_dump(mode="json") for result in tool_results],
+        "citations": [citation.model_dump(mode="json") for citation in context.citations],
+        "intent": intent,
+        "compression": context_compression_summary(context),
+        "fallback": fallback.as_dict(),
+    }
+    root_trace.tokens = int(
+        (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+    )
+    root_trace.latency_ms = int((time.perf_counter() - started) * 1000)
+    await db.flush()
+
+
+def stream_done_payload(result: AgentRunOut) -> dict[str, Any]:
+    return {
+        "conversation_id": str(result.conversation_id),
+        "user_message_id": str(result.user_message_id),
+        "assistant_message_id": str(result.assistant_message_id),
+        "trace_id": str(result.trace_id),
+        "usage": result.usage,
+        "tool_results": [tool.model_dump(mode="json") for tool in result.tool_results],
+        "citation_count": len(result.citations),
+        "intent": result.intent,
+        "compression_strategy": result.context.compression_strategy,
+        "compression_applied": result.context.compression_applied,
+        "original_history_tokens": result.context.original_history_tokens,
+        "compressed_history_tokens": result.context.compressed_history_tokens,
+        "compressed_message_count": result.context.compressed_message_count,
+        "compression_fallback": result.context.compression_fallback,
+        "status": "fallback" if result.fallback_applied else "ok",
+        "fallback_applied": result.fallback_applied,
+        "fallback_reason": result.fallback_reason,
+        "fallback_message": result.fallback_message,
+    }
+
+
+async def archive_runtime_incidents(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    conversation: Conversation,
+    agent: Agent,
+    user_message_id: UUID,
+    assistant_message_id: UUID,
+    trace_id: UUID,
+    query: str,
+    answer: str,
+    fallback: FallbackResult,
+    tool_results: list[RuntimeToolCallOut],
+    citations: list[Any],
+) -> None:
+    detail = {
+        "query": query,
+        "answer": answer,
+        "fallback_reason": fallback.reason,
+        "tool_results": [result.model_dump(mode="json") for result in tool_results],
+        "citation_count": len(citations),
+    }
+    if fallback.applied:
+        incident_type = (
+            "no_citation" if fallback.reason == "retrieval_empty" else "fallback_applied"
+        )
+        await create_incident_safe(
+            db,
+            tenant_id=tenant_id,
+            payload=incident_from_runtime(
+                tenant_id=tenant_id,
+                conversation_id=conversation.id,
+                message_id=assistant_message_id,
+                agent_id=agent.id,
+                trace_id=trace_id,
+                incident_type=incident_type,
+                severity="medium" if incident_type == "no_citation" else "low",
+                title=f"运行触发 fallback：{fallback.reason}",
+                query=query,
+                answer=answer,
+                detail=detail,
+            ),
+            created_by=user_id,
+        )
+    if fallback.reason == "model_error":
+        await create_incident_safe(
+            db,
+            tenant_id=tenant_id,
+            payload=incident_from_runtime(
+                tenant_id=tenant_id,
+                conversation_id=conversation.id,
+                message_id=assistant_message_id,
+                agent_id=agent.id,
+                trace_id=trace_id,
+                incident_type="model_failed",
+                severity="high",
+                title="模型调用失败",
+                query=query,
+                answer=answer,
+                detail=detail,
+            ),
+            created_by=user_id,
+        )
+    if any(result.status == "failed" for result in tool_results):
+        await create_incident_safe(
+            db,
+            tenant_id=tenant_id,
+            payload=incident_from_runtime(
+                tenant_id=tenant_id,
+                conversation_id=conversation.id,
+                message_id=assistant_message_id,
+                agent_id=agent.id,
+                trace_id=trace_id,
+                incident_type="tool_failed",
+                severity="medium",
+                title="工具调用失败",
+                query=query,
+                answer=answer,
+                detail=detail,
+            ),
+            created_by=user_id,
+        )
 
 
 async def ensure_conversation(
@@ -1082,6 +1669,35 @@ def format_tool_failure_answer(results: list[RuntimeToolCallOut]) -> str:
     if detail:
         return f"工具 {failed.tool_name} 执行失败：{detail}"
     return f"工具 {failed.tool_name} 执行失败：{error}"
+
+
+def context_rerank_summary(context: ContextBuildOut) -> dict[str, Any]:
+    modes = [citation.rerank_mode for citation in context.citations if citation.rerank_mode]
+    scores = [
+        citation.rerank_score
+        for citation in context.citations
+        if citation.rerank_score is not None
+    ]
+    return {
+        "mode": modes[0] if modes else "off",
+        "fallback": any(bool(citation.rerank_fallback) for citation in context.citations),
+        "citation_count": len(context.citations),
+        "reranked_count": len(scores),
+    }
+
+
+def context_compression_summary(context: ContextBuildOut) -> dict[str, Any]:
+    return {
+        "strategy": context.compression_strategy,
+        "applied": context.compression_applied,
+        "original_history_tokens": context.original_history_tokens,
+        "compressed_history_tokens": context.compressed_history_tokens,
+        "compressed_message_count": context.compressed_message_count,
+        "fallback": context.compression_fallback,
+        "summary_preview": context.compression_summary[:500]
+        if context.compression_summary
+        else None,
+    }
 
 
 def extract_answer(response: dict[str, Any]) -> str:

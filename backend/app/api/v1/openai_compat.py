@@ -64,7 +64,10 @@ async def openai_chat_completions_api(
 
     await enforce_public_key_limits(redis, auth)
     agent_payload = AgentRunIn(
-        query=query, max_tokens=clamp_max_tokens(payload.max_tokens), max_tool_rounds=0
+        query=query,
+        max_tokens=clamp_max_tokens(payload.max_tokens),
+        max_tool_rounds=0,
+        runtime_snapshot=auth.runtime_snapshot,
     )
     if payload.stream:
         events = stream_openai_chat_events(

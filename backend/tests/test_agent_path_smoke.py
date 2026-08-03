@@ -39,6 +39,9 @@ class FakeDB:
     async def commit(self) -> None:
         self.commits += 1
 
+    async def rollback(self) -> None:
+        return None
+
     async def refresh(self, obj) -> None:
         if hasattr(obj, "id") and getattr(obj, "id", None) is None:
             setattr(obj, "id", uuid4())
@@ -46,9 +49,17 @@ class FakeDB:
     async def get(self, model, id_):
         return None
 
+    async def execute(self, stmt):
+        return FakeExecuteResult()
+
     @property
     def traces(self) -> list[RunTrace]:
         return [obj for obj in self.added if isinstance(obj, RunTrace)]
+
+
+class FakeExecuteResult:
+    def scalar_one_or_none(self):
+        return None
 
 
 def run_async(awaitable):
@@ -299,7 +310,9 @@ def test_non_stream_tool_exception_returns_structured_error(
     assert result.tool_results[0].status == "failed"
     assert result.tool_results[0].output["error"] == "tool_execution_failed"
     assert "boom" in result.tool_results[0].output["detail"]
-    assert result.answer.startswith("工具 echo 执行失败")
+    assert result.answer == "工具调用失败，请稍后重试或联系管理员。"
+    assert result.fallback_applied is True
+    assert result.fallback_reason == "tool_error"
     assert db.traces[0].status == "failed"
 
 
@@ -535,11 +548,12 @@ def test_stream_model_failure_commits_failed_trace_and_done(
         )
     )
 
-    assert [event["event"] for event in events] == ["error", "done"]
-    assert events[-1]["data"]["status"] == "failed"
-    assert db.commits == 1
+    assert [event["event"] for event in events] == ["fallback", "delta", "done"]
+    assert events[-1]["data"]["status"] == "fallback"
+    assert events[-1]["data"]["fallback_applied"] is True
+    assert events[-1]["data"]["fallback_reason"] == "model_error"
     assert db.traces[0].status == "failed"
-    assert db.traces[0].output == {"error": "maas_timeout"}
+    assert db.traces[0].output["fallback"]["fallback_reason"] == "model_error"
 
 
 def test_non_stream_dependency_failure_is_structured_and_committed(
@@ -555,21 +569,20 @@ def test_non_stream_dependency_failure_is_structured_and_committed(
 
     monkeypatch.setattr(runtime, "call_maas_chat", failing_call_maas_chat)
 
-    with pytest.raises(runtime.OrchestratorError) as exc_info:
-        run_async(
-            runtime.run_agent(
-                db,
-                tenant_id=TENANT_ID,
-                user_id=USER_ID,
-                agent_id=agent.id,
-                payload=AgentRunIn(query="依赖失败"),
-            )
+    result = run_async(
+        runtime.run_agent(
+            db,
+            tenant_id=TENANT_ID,
+            user_id=USER_ID,
+            agent_id=agent.id,
+            payload=AgentRunIn(query="依赖失败"),
         )
+    )
 
-    assert exc_info.value.code == "dependency_unavailable"
-    assert db.commits == 1
+    assert result.fallback_applied is True
+    assert result.fallback_reason == "model_error"
     assert db.traces[0].status == "failed"
-    assert db.traces[0].output == {"error": "dependency_unavailable"}
+    assert db.traces[0].output["fallback"]["fallback_reason"] == "model_error"
 
 
 def test_stream_dependency_failure_is_structured_and_done(
@@ -598,11 +611,10 @@ def test_stream_dependency_failure_is_structured_and_done(
         )
     )
 
-    assert [event["event"] for event in events] == ["error", "done"]
-    assert events[0]["data"]["code"] == "dependency_unavailable"
-    assert events[-1]["data"]["status"] == "failed"
-    assert db.commits == 1
-    assert db.traces[0].output == {"error": "dependency_unavailable"}
+    assert [event["event"] for event in events] == ["fallback", "delta", "done"]
+    assert events[-1]["data"]["status"] == "fallback"
+    assert events[-1]["data"]["fallback_reason"] == "model_error"
+    assert db.traces[0].output["fallback"]["fallback_reason"] == "model_error"
 
 
 def test_non_stream_model_failure_should_commit_failed_trace(
@@ -618,19 +630,17 @@ def test_non_stream_model_failure_should_commit_failed_trace(
 
     monkeypatch.setattr(runtime, "call_maas_chat", failing_call_maas_chat)
 
-    try:
-        run_async(
-            runtime.run_agent(
-                db,
-                tenant_id=TENANT_ID,
-                user_id=USER_ID,
-                agent_id=agent.id,
-                payload=AgentRunIn(query="模型失败"),
-            )
+    result = run_async(
+        runtime.run_agent(
+            db,
+            tenant_id=TENANT_ID,
+            user_id=USER_ID,
+            agent_id=agent.id,
+            payload=AgentRunIn(query="模型失败"),
         )
-    except ValueError:
-        pass
+    )
 
-    assert db.commits == 1
+    assert result.fallback_applied is True
+    assert result.fallback_reason == "model_error"
     assert db.traces[0].status == "failed"
-    assert db.traces[0].output == {"error": "maas_timeout"}
+    assert db.traces[0].output["fallback"]["fallback_reason"] == "model_error"

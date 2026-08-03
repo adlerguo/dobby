@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = Field(default=10)
     db_pool_timeout: float = Field(default=30.0)
     db_pool_recycle: int = Field(default=1800)
+    computer_use_enabled: bool = Field(default=False)
+    computer_use_max_session_minutes: int = Field(default=15)
+    computer_use_max_actions: int = Field(default=20)
 
 
 settings = Settings()

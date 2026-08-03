@@ -96,6 +96,70 @@ services:
       - default
       - sandbox_net
 
+  copilot-worker:
+    build:
+      context: ./backend
+    command: python -m app.workers.copilot_task_worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:pass@postgres:5432/eap}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_KEY: ${MINIO_KEY:-minioadmin}
+      MINIO_SECRET: ${MINIO_SECRET:-minioadmin}
+      MAAS_BASE_URL: ${MAAS_BASE_URL:-http://maas:8100}
+      MAAS_ADMIN_TOKEN: ${MAAS_ADMIN_TOKEN:-dev-maas-admin-token-change-me}
+      SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-http://sandbox:8200}
+      APP_SECRETS_DIR: /data/secrets
+      AUTO_GENERATE_SECRETS: "true"
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-3600}
+      UPSTREAM_CONNECT_TIMEOUT: ${UPSTREAM_CONNECT_TIMEOUT:-5}
+      UPSTREAM_READ_TIMEOUT: ${UPSTREAM_READ_TIMEOUT:-60}
+      UPSTREAM_WRITE_TIMEOUT: ${UPSTREAM_WRITE_TIMEOUT:-10}
+      UPSTREAM_POOL_TIMEOUT: ${UPSTREAM_POOL_TIMEOUT:-5}
+      ENABLE_AUTO_CODE_TOOLS: ${ENABLE_AUTO_CODE_TOOLS:-false}
+      CODE_TOOL_ALLOWLIST: ${CODE_TOOL_ALLOWLIST:-}
+      HTTP_TOOL_ALLOWED_HOSTS: ${HTTP_TOOL_ALLOWED_HOSTS:-}
+      COPILOT_WORKER_POLL_INTERVAL: ${COPILOT_WORKER_POLL_INTERVAL:-2}
+    volumes:
+      - app_secrets:/data/secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      maas:
+        condition: service_started
+      sandbox:
+        condition: service_started
+    networks:
+      - default
+      - sandbox_net
+
+  computer-use-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.computer-use
+    command: python -m app.workers.computer_use_worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:pass@postgres:5432/eap}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      APP_SECRETS_DIR: /data/secrets
+      AUTO_GENERATE_SECRETS: "true"
+      COMPUTER_USE_ENABLED: ${COMPUTER_USE_ENABLED:-false}
+      COMPUTER_USE_WORKER_POLL_INTERVAL: ${COMPUTER_USE_WORKER_POLL_INTERVAL:-2}
+    volumes:
+      - app_secrets:/data/secrets
+    shm_size: "1gb"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+
   maas:
     build:
       context: ./maas

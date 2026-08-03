@@ -36,11 +36,14 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt pytest
+        run: pip install -r backend/requirements-dev.txt
+      - name: Compile backend
+        run: python -m compileall backend/app
       - name: Run migrations
         working-directory: backend
         env:
           DATABASE_URL: postgresql+psycopg://app:pass@localhost:5432/eap
+          POSTGRES_TEST_DSN: postgresql://app:pass@localhost:5432/eap
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: ci-jwt-secret
           MAAS_ADMIN_TOKEN: ci-maas-token
@@ -48,10 +51,11 @@ jobs:
       - name: Run backend tests
         env:
           DATABASE_URL: postgresql+psycopg://app:pass@localhost:5432/eap
+          POSTGRES_TEST_DSN: postgresql://app:pass@localhost:5432/eap
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: ci-jwt-secret
           MAAS_ADMIN_TOKEN: ci-maas-token
-        run: pytest backend/tests
+        run: python -m pytest backend/tests -q
 
   frontend:
     runs-on: ubuntu-latest
